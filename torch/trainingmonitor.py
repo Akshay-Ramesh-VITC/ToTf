@@ -1,50 +1,82 @@
 import torch
 import psutil
+import csv
 import time
+import os
 from tqdm.auto import tqdm
-from typing import Dict, Optional
+from typing import Iterable, Dict, Any
 
 class TrainingMonitor:
-    def __init__(self, total_steps: int, desc: str = "Training"):
-        self.total_steps = total_steps
-        self.pbar = tqdm(total=total_steps, desc=desc, dynamic_ncols=True)
-        self.start_time = time.time()
+    def __init__(self, iterable: Iterable, desc: str = "Training", log_file: str = "train_log.csv"):
+        self.iterable = iterable
+        self.total = len(iterable) if hasattr(iterable, "__len__") else None
+        self.desc = desc
+        self.log_file = log_file
+        
+        # Metrics state
+        self.metrics = {}
+        self.column_names = None
+        self.file_handle = None
+        self.writer = None
 
-    def _get_resources(self) -> Dict[str, str]:
-        """Fetches current RAM and VRAM usage."""
-        resources = {}
-        
-        # System RAM
-        ram_gb = psutil.virtual_memory().used / (1024**3)
-        resources["RAM"] = f"{ram_gb:.1f}GB"
-        
-        # GPU VRAM (if available)
+    def _init_logger(self, keys):
+        """Initializes the CSV file with headers."""
+        self.column_names = ["timestamp", "step"] + list(keys) + ["RAM_pct", "VRAM_gb"]
+        file_exists = os.path.isfile(self.log_file)
+        self.file_handle = open(self.log_file, mode='a', newline='')
+        self.writer = csv.DictWriter(self.file_handle, fieldnames=self.column_names)
+        if not file_exists:
+            self.writer.writeheader()
+
+    def __iter__(self):
+        self.pbar = tqdm(self.iterable, total=self.total, desc=self.desc, dynamic_ncols=True)
+        try:
+            for item in self.pbar:
+                yield item
+                self._refresh_display()
+        finally:
+            self.close()
+
+    def log(self, metrics: Dict[str, float]):
+        """Records metrics, updates running averages, and writes to disk."""
+        # 1. Initialize CSV on first log call
+        if self.writer is None:
+            self._init_logger(metrics.keys())
+
+        # 2. Update Running Averages (Keras style)
+        n = self.pbar.n
+        for k, v in metrics.items():
+            if k in self.metrics:
+                self.metrics[k] = (self.metrics[k] * n + v) / (n + 1)
+            else:
+                self.metrics[k] = v
+
+        # 3. Auto-write to CSV
+        res = self._get_resources()
+        row = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "step": n,
+            "RAM_pct": res["RAM"],
+            "VRAM_gb": res["VRAM"],
+            **self.metrics
+        }
+        self.writer.writerow(row)
+        self.file_handle.flush() # Ensure data is written even if crash occurs
+
+    def _get_resources(self) -> Dict[str, Any]:
+        res = {"RAM": psutil.virtual_memory().percent, "VRAM": 0.0}
         if torch.cuda.is_available():
-            vram_gb = torch.cuda.memory_reserved() / (1024**3)
-            resources["VRAM"] = f"{vram_gb:.1f}GB"
-            
-        return resources
+            res["VRAM"] = round(torch.cuda.memory_reserved() / (1024**3), 2)
+        return res
 
-    def update(self, step: int, metrics: Dict[str, float], prefix: str = ""):
-        """
-        Updates the progress bar with metrics and resource usage.
-        """
-        # Combine metrics with resource tracking
-        stats = {k: f"{v:.4f}" if isinstance(v, float) else v for k, v in metrics.items()}
-        stats.update(self._get_resources())
-        
-        # Update tqdm description and postfix
-        if prefix:
-            self.pbar.set_description(f"{prefix}")
-        
-        self.pbar.set_postfix(stats)
-        self.pbar.update(step - self.pbar.n)
+    def _refresh_display(self):
+        display = {k: f"{v:.4f}" for k, v in self.metrics.items()}
+        res = self._get_resources()
+        display.update({ "RAM": f"{res['RAM']}%", "VRAM": f"{res['VRAM']}GB" })
+        self.pbar.set_postfix(display)
 
     def close(self):
-        self.pbar.close()
-
-    def __enter__(self):
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        if self.file_handle:
+            self.file_handle.close()
+        if hasattr(self, 'pbar'):
+            self.pbar.close()
