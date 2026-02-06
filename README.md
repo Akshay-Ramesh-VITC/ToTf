@@ -19,6 +19,7 @@ Advanced model analysis with intelligent insights (UNIQUE features vs torchsumma
 - **Comprehensive analysis** - layer shapes, parameters, and memory usage
 - **Export capabilities** - save to files or export as dictionaries
 - **Complex architectures** - works with nested models, residual connections, etc.
+- **Cross-framework support** - Available for both PyTorch and TensorFlow/Keras
 
 ## Installation
 
@@ -38,10 +39,12 @@ pip install -r requirements.txt
 
 ## Quick Start
 
-### TrainingMonitor
+### PyTorch
+
+#### TrainingMonitor (PyTorch)
 
 ```python
-from ToTf import TrainingMonitor
+from ToTf.pytorch import TrainingMonitor
 
 for epoch in range(epochs):
     monitor = TrainingMonitor(train_loader, desc=f"Epoch {epoch+1}")
@@ -51,10 +54,10 @@ for epoch in range(epochs):
         monitor.log({'loss': loss.item()})
 ```
 
-### SmartSummary
+#### SmartSummary (PyTorch)
 
 ```python
-from ToTf import SmartSummary
+from ToTf.pytorch import SmartSummary
 
 # Basic analysis
 model = YourModel()
@@ -70,6 +73,51 @@ for bn in bottlenecks:
 summary = SmartSummary(model, input_size=(3, 224, 224), track_gradients=True)
 summary.show()
 ```
+
+### TensorFlow/Keras
+
+#### SmartSummary (TensorFlow)
+
+```python
+from ToTf.tenf import SmartSummary
+
+# Basic analysis
+model = tf.keras.Sequential([...])
+summary = SmartSummary(model, input_shape=(224, 224, 3))
+summary.show()
+
+# Find bottlenecks
+bottlenecks = summary.get_bottlenecks(top_n=5)
+for bn in bottlenecks:
+    print(f"{bn['layer']}: {', '.join(bn['reasons'])}")
+
+# Track gradients for debugging
+summary = SmartSummary(model, input_shape=(224, 224, 3), track_gradients=True)
+summary.show()
+```
+
+---
+
+## Framework Differences
+
+### SmartSummary: PyTorch vs TensorFlow
+
+Both implementations provide the same core features, but with framework-specific adaptations:
+
+| Aspect | PyTorch | TensorFlow/Keras |
+|--------|---------|------------------|
+| **Import** | `from ToTf.pytorch import SmartSummary` | `from ToTf.tenf import SmartSummary` |
+| **Input parameter** | `input_size=(3, 224, 224)` (channels first) | `input_shape=(224, 224, 3)` (channels last) |
+| **Model type** | `torch.nn.Module` | `tf.keras.Model` |
+| **Device param** | `device='cuda'` ✓ | Not needed (TF auto-manages) |
+| **Gradient tracking** | Uses backward hooks | Uses `tf.GradientTape` |
+| **Multi-input** | Tuple of sizes | List of shapes |
+| **Extra methods** | - | `compare_with_keras_summary()` |
+
+**Key differences:**
+- **Shape convention**: PyTorch uses channels-first (C, H, W), TensorFlow uses channels-last (H, W, C)
+- **Automatic builds**: TensorFlow models build automatically on first forward pass
+- **Multi-input models**: TensorFlow has first-class support with `input_shape=[(shape1), (shape2)]`
 
 ---
 
@@ -109,8 +157,12 @@ Automatically tracks RAM usage (%) and VRAM usage (GB if CUDA available).
 
 ### Common Patterns
 
+#### PyTorch
+
 **1. Quick Model Analysis**
 ```python
+from ToTf.pytorch import SmartSummary
+
 summary = SmartSummary(model, input_size=(3, 224, 224))
 summary.show()
 ```
@@ -144,6 +196,49 @@ summary = SmartSummary(model, input_size=(3, 224, 224), device='cuda')
 **6. Without Forward Pass (Fast)**
 ```python
 summary = SmartSummary(model)  # Just count parameters, no shape inference
+```
+
+#### TensorFlow/Keras
+
+**1. Quick Model Analysis**
+```python
+from ToTf.tenf import SmartSummary
+
+summary = SmartSummary(model, input_shape=(224, 224, 3))
+summary.show()
+```
+
+**2. Find Bottlenecks**
+```python
+bottlenecks = summary.get_bottlenecks(top_n=5)
+for bn in bottlenecks:
+    print(f"⚠️ {bn['layer']}: Score {bn['score']:.1f}")
+    print(f"   Issues: {', '.join(bn['reasons'])}")
+    print(f"   Parameters: {bn['params']:,}")
+```
+
+**3. Debug Training Issues**
+```python
+summary = SmartSummary(model, input_shape=(224, 224, 3), track_gradients=True)
+summary.show()  # Shows gradient variance/mean/max
+```
+
+**4. Multi-Input Models**
+```python
+# For models with multiple inputs
+summary = SmartSummary(model, input_shape=[(224, 224, 3), (100,)])
+summary.show()
+```
+
+**5. Compare with Keras Summary**
+```python
+summary.compare_with_keras_summary()  # Shows both summaries
+```
+
+**6. Export Analysis**
+```python
+summary.save_to_file("model_analysis.txt")
+data = summary.to_dict()  # For programmatic access
 ```
 
 ### Bottleneck Detection
@@ -184,6 +279,8 @@ TrainingMonitor(iterable, desc="Training", log_file="train_log.csv")
 
 ### SmartSummary
 
+#### PyTorch API
+
 ```python
 SmartSummary(model, input_size=None, batch_size=1, device='cpu', track_gradients=False)
 ```
@@ -195,11 +292,28 @@ SmartSummary(model, input_size=None, batch_size=1, device='cpu', track_gradients
 - `device` (str) - Device: 'cpu' or 'cuda' (default: 'cpu')
 - `track_gradients` (bool) - Track gradient statistics (default: False, slower)
 
+#### TensorFlow/Keras API
+
+```python
+SmartSummary(model, input_shape=None, batch_size=1, track_gradients=False)
+```
+
+**Parameters:**
+- `model` (keras.Model) - TensorFlow/Keras model to analyze
+- `input_shape` (Tuple or List[Tuple], optional) - Input shape excluding batch, e.g., `(224, 224, 3)` for single input or `[(224, 224, 3), (100,)]` for multi-input
+- `batch_size` (int) - Batch size for inference (default: 1)
+- `track_gradients` (bool) - Track gradient statistics (default: False, slower)
+
+#### Common Methods (Both Frameworks)
+
 **Methods:**
 - `show(show_bottlenecks=True)` - Display formatted summary table
 - `get_bottlenecks(top_n=5)` - Get list of bottleneck layers
 - `to_dict()` - Export complete analysis as dictionary
 - `save_to_file(filename)` - Save summary to text file (UTF-8)
+
+**TensorFlow-specific Methods:**
+- `compare_with_keras_summary()` - Show both Keras built-in summary and SmartSummary side-by-side
 
 **Bottleneck Dictionary Keys:**
 - `layer` - Layer identifier
@@ -224,6 +338,8 @@ SmartSummary(model, input_size=None, batch_size=1, device='cpu', track_gradients
 | Memory estimation | ✓ | ✓ | ✓ | ✗ |
 | Export to file/dict | ✓ | ✗ | ✓ | ✗ |
 | Complex models | ✓ | Limited | ✓ | Limited |
+| **PyTorch support** | **✓** | ✓ | ✓ | ✗ |
+| **TensorFlow support** | **✓** | ✗ | ✗ | ✓ |
 
 **SmartSummary is the ONLY tool with automatic bottleneck detection and gradient tracking!**
 
@@ -231,8 +347,12 @@ SmartSummary(model, input_size=None, batch_size=1, device='cpu', track_gradients
 
 ## Examples
 
-See [example_usage.py](example_usage.py) for TrainingMonitor examples.  
-See [example_smartsummary.py](example_smartsummary.py) for SmartSummary examples (6 detailed scenarios).
+### PyTorch Examples
+- [example_usage.py](example_usage.py) - TrainingMonitor examples  
+- [example_smartsummary.py](example_smartsummary.py) - SmartSummary examples (6 detailed scenarios)
+
+### TensorFlow Examples
+- [example_smartsummary_tf.py](example_smartsummary_tf.py) - SmartSummary examples for TensorFlow/Keras (8 detailed scenarios including multi-input models, gradient tracking, and MobileNetV2 analysis)
 
 ---
 
@@ -241,12 +361,15 @@ See [example_smartsummary.py](example_smartsummary.py) for SmartSummary examples
 Run the test suites to verify everything works:
 
 ```bash
-# Test TrainingMonitor
-python test_monitor.py
-python test_integration.py
+# Test TrainingMonitor (PyTorch)
+python test/test_monitor.py
+python test/test_integration.py
 
-# Test SmartSummary
-python test_smartsummary.py
+# Test SmartSummary (PyTorch)
+python test/test_smartsummary.py
+
+# Test SmartSummary (TensorFlow)
+python test/test_smartsummary_tf.py
 ```
 
 All tests pass with 100% success rate ✓
@@ -268,19 +391,27 @@ print(get_backend())  # Returns 'torch' or 'tensorflow'
 
 ```
 ToTf/
-├── __init__.py                   # Package exports
-├── backend.py                    # Backend detection
-├── requirements.txt              # Dependencies
-├── setup.py                      # Package config
+├── __init__.py                     # Package exports with auto backend detection
+├── backend.py                      # Backend detection (PyTorch/TensorFlow)
+├── requirements.txt                # Dependencies
+├── setup.py                        # Package config
 ├── pytorch/
-│   ├── trainingmonitor.py       # TrainingMonitor implementation
-│   ├── smartsummary.py          # SmartSummary implementation
-│   └── README.md                # Module-specific docs
-├── example_usage.py             # TrainingMonitor examples
-├── example_smartsummary.py      # SmartSummary examples
-├── test_monitor.py              # TrainingMonitor tests
-├── test_integration.py          # Integration tests
-└── test_smartsummary.py         # SmartSummary tests
+│   ├── __init__.py
+│   ├── trainingmonitor.py         # TrainingMonitor implementation
+│   ├── smartsummary.py            # SmartSummary implementation (PyTorch)
+│   └── README.md                  # PyTorch module docs
+├── tenf/
+│   ├── __init__.py
+│   ├── smartsummary.py            # SmartSummary implementation (TensorFlow)
+│   └── README.md                  # TensorFlow module docs
+├── example_usage.py               # TrainingMonitor examples
+├── example_smartsummary.py        # SmartSummary examples (PyTorch)
+├── example_smartsummary_tf.py     # SmartSummary examples (TensorFlow)
+├── test/
+│   ├── test_monitor.py            # TrainingMonitor tests
+│   ├── test_integration.py        # Integration tests
+│   └── test_smartsummary.py       # SmartSummary tests
+└── README.md                      # This file
 ```
 
 ---

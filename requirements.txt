@@ -4,8 +4,8 @@ tqdm>=4.65.0
 psutil>=5.9.0
 numpy>=1.24.0
 
-# Optional TensorFlow support
-# tensorflow>=2.13.0
+# TensorFlow support (now fully implemented)
+tensorflow>=2.13.0
 
 # Development dependencies
 # pytest>=7.4.0

@@ -14,7 +14,7 @@ if _BACKEND == "torch":
     from .pytorch.trainingmonitor import TrainingMonitor
     from .pytorch.smartsummary import SmartSummary
 elif _BACKEND == "tensorflow":
-    # TensorFlow implementation goes here
-    pass
+    from .tenf.smartsummary import SmartSummary
+    # TrainingMonitor for TensorFlow to be implemented
 else:
     raise ImportError("No compatible backend found. Install PyTorch or TensorFlow.")
