@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "totf"
+version = "0.1.0"
+dependencies = []
+requires-python = ">=3.11"
+authors = [
+  {name = "Akshay"},
+]
+readme = "README.md"
