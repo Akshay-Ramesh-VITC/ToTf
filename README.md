@@ -21,6 +21,25 @@ Advanced model analysis with intelligent insights (UNIQUE features vs torchsumma
 - **Complex architectures** - works with nested models, residual connections, etc.
 - **Cross-framework support** - Available for both PyTorch and TensorFlow/Keras
 
+### 🛠️ Utility Functions (NEW!)
+Framework-agnostic "missing" functions that save time and improve code quality:
+
+#### Auto-Shape Flattener
+- **`lazy_flatten(tensor)`** - Automatically flatten tensors without manual size calculation
+- **`get_flatten_size(shape)`** - Calculate flattened dimensions for Conv->Linear/Dense transitions
+- **Use case**: Eliminates error-prone manual calculations when transitioning from convolutional to fully connected layers
+
+#### Normalized Cross-Correlation (NCC) Loss
+- **`loss_ncc(y_true, y_pred)`** - NCC loss function for medical imaging and registration
+- **`ncc_score(y_true, y_pred)`** - NCC similarity metric (higher is better)
+- **`NCCLoss()`** - Keras-compatible NCC loss class (TensorFlow)
+- **Use case**: Medical imaging (ACDC, ADNI datasets), robust to intensity variations, better than MSE for registration tasks
+
+#### Learning Rate Finder
+- **`find_lr(model, optimizer, ...)`** - Find optimal learning rate automatically
+- **`LRFinder`** - Full-featured LR range test class with plotting
+- **Use case**: Automatically discover the best learning rate before training (fast.ai style), avoid manual tuning
+
 ## Installation
 
 ```bash
@@ -31,6 +50,7 @@ pip install -r requirements.txt
 - [Quick Start](#quick-start)
 - [TrainingMonitor Guide](#trainingmonitor-guide)
 - [SmartSummary Guide](#smartsummary-guide)
+- [Utility Functions Guide](#utility-functions-guide)
 - [API Reference](#api-reference)
 - [Examples](#examples)
 - [Comparison with Alternatives](#comparison-with-alternatives)
@@ -74,6 +94,31 @@ summary = SmartSummary(model, input_size=(3, 224, 224), track_gradients=True)
 summary.show()
 ```
 
+#### Utility Functions (PyTorch)
+
+```python
+from ToTf.pytorch import lazy_flatten, loss_ncc, find_lr
+
+# 1. Auto-flatten Conv output
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(3, 64, 3)
+        self.fc = nn.Linear(get_flatten_size((64, 30, 30)), 10)
+    
+    def forward(self, x):
+        x = self.conv(x)
+        x = lazy_flatten(x)  # No manual calculation needed!
+        return self.fc(x)
+
+# 2. NCC loss for medical imaging
+loss = loss_ncc(ground_truth, prediction)  # Robust to intensity variations
+
+# 3. Find optimal learning rate
+best_lr = find_lr(model, optimizer, criterion, train_loader)
+print(f"Use learning rate: {best_lr}")
+```
+
 ### TensorFlow/Keras
 
 #### SmartSummary (TensorFlow)
@@ -95,6 +140,30 @@ for bn in bottlenecks:
 summary = SmartSummary(model, input_shape=(224, 224, 3), track_gradients=True)
 summary.show()
 ```
+
+#### Utility Functions (TensorFlow)
+
+```python
+from ToTf.tenf import lazy_flatten, NCCLoss, find_lr
+
+# 1. Auto-flatten Conv output
+class MyModel(keras.Model):
+    def __init__(self):
+        super().__init__()
+        self.conv = keras.layers.Conv2D(64, 3)
+        self.fc = keras.layers.Dense(10)
+    
+    def call(self, x):
+        x = self.conv(x)
+        x = lazy_flatten(x)  # Automatic flattening!
+        return self.fc(x)
+
+# 2. NCC loss for medical imaging
+model.compile(optimizer='adam', loss=NCCLoss())  # Keras-compatible!
+
+# 3. Find optimal learning rate
+best_lr = find_lr(model, keras.losses.CategoricalCrossentropy(), train_dataset)
+print(f"Use learning rate: {best_lr}")
 
 ---
 
@@ -252,6 +321,203 @@ Each bottleneck gets a score - higher scores indicate more critical optimization
 
 ---
 
+## Utility Functions Guide
+
+### Auto-Shape Flattener
+
+**Problem**: Transitioning from convolutional layers to dense/linear layers requires calculating exact flattened sizes, which is error-prone.
+
+**Solution**: `lazy_flatten()` and `get_flatten_size()` handle this automatically.
+
+#### PyTorch Example
+
+```python
+from ToTf.pytorch import lazy_flatten, get_flatten_size
+import torch.nn as nn
+
+class MyCNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 32, 3)
+        self.conv2 = nn.Conv2d(32, 64, 3)
+        self.pool = nn.MaxPool2d(2)
+        
+        # Calculate flatten size automatically
+        # Input: 32x32 -> Conv: 30x30 -> Pool: 15x15 -> Conv: 13x13 -> Pool: 6x6
+        flat_size = get_flatten_size((64, 6, 6))  # 2304
+        self.fc = nn.Linear(flat_size, 10)
+    
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = lazy_flatten(x)  # Automatically flattens to [batch, 2304]
+        return self.fc(x)
+```
+
+#### TensorFlow Example
+
+```python
+from ToTf.tenf import lazy_flatten, get_flatten_size
+from tensorflow import keras
+
+class MyCNN(keras.Model):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = keras.layers.Conv2D(32, 3)
+        self.conv2 = keras.layers.Conv2D(64, 3)
+        self.pool = keras.layers.MaxPooling2D(2)
+        
+        # Calculate flatten size automatically (channels-last format)
+        flat_size = get_flatten_size((6, 6, 64))  # 2304
+        self.fc = keras.layers.Dense(10)
+    
+    def call(self, x):
+        x = self.pool(tf.nn.relu(self.conv1(x)))
+        x = self.pool(tf.nn.relu(self.conv2(x)))
+        x = lazy_flatten(x)  # Automatically flattens
+        return self.fc(x)
+```
+
+---
+
+### Normalized Cross-Correlation (NCC) Loss
+
+**Problem**: Medical imaging tasks (registration, segmentation) need losses robust to intensity variations. MSE fails when images have different brightness/contrast.
+
+**Solution**: NCC loss measures structural similarity, invariant to linear intensity transformations.
+
+#### When to Use NCC
+
+- ✅ Medical image registration (MRI, CT scans)
+- ✅ Image alignment tasks
+- ✅ When images have varying intensity/contrast
+- ✅ ACDC, ADNI, and similar medical datasets
+- ❌ Classification tasks (use CrossEntropy)
+- ❌ When exact pixel values matter
+
+#### PyTorch Example
+
+```python
+from ToTf.pytorch import loss_ncc, ncc_score
+import torch.nn as nn
+
+# Medical image segmentation model
+model = MySegmentationModel()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+for epoch in range(epochs):
+    for images, masks in dataloader:
+        optimizer.zero_grad()
+        
+        predictions = model(images)
+        loss = loss_ncc(masks, predictions)  # NCC loss
+        
+        loss.backward()
+        optimizer.step()
+        
+        # Track similarity score (higher is better)
+        score = ncc_score(masks, predictions)
+        print(f"NCC Score: {score.item():.4f}")
+```
+
+#### TensorFlow Example
+
+```python
+from ToTf.tenf import NCCLoss, ncc_score
+
+# Method 1: Use in model.compile()
+model = MySegmentationModel()
+model.compile(
+    optimizer='adam',
+    loss=NCCLoss(),  # Keras-compatible!
+    metrics=['mse']  # Can track MSE for comparison
+)
+
+model.fit(x_train, y_train, epochs=10)
+
+# Method 2: Use as function
+for images, masks in dataset:
+    with tf.GradientTape() as tape:
+        predictions = model(images)
+        loss = loss_ncc(masks, predictions)
+        score = ncc_score(masks, predictions)
+```
+
+**NCC Characteristics:**
+- Returns 0 when images are identical
+- Range: 0 to 2 (lower is better for loss)
+- Score range: -1 to 1 (higher is better)
+- Invariant to linear intensity scaling: `loss_ncc(img, img*2) ≈ 0`
+
+---
+
+### Learning Rate Finder
+
+**Problem**: Finding the optimal learning rate requires trial and error. Too high = divergence, too low = slow training.
+
+**Solution**: LR Finder runs a short test with exponentially increasing LRs to find the "sweet spot".
+
+#### PyTorch Example
+
+```python
+from ToTf.pytorch import find_lr, LRFinder
+import torch.nn as nn
+
+model = MyModel()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)  # Placeholder LR
+criterion = nn.CrossEntropyLoss()
+
+# Method 1: Quick and easy
+best_lr = find_lr(model, optimizer, criterion, train_loader)
+print(f"Suggested LR: {best_lr}")
+
+# Now use the found LR
+optimizer = torch.optim.Adam(model.parameters(), lr=best_lr)
+
+# Method 2: Full control
+lr_finder = LRFinder(model, optimizer, criterion, device='cuda')
+lr_finder.range_test(train_loader, start_lr=1e-7, end_lr=10, num_iter=100)
+lr_finder.plot()  # Shows loss vs LR curve
+best_lr = lr_finder.get_best_lr()
+```
+
+#### TensorFlow Example
+
+```python
+from ToTf.tenf import find_lr, LRFinder
+from tensorflow import keras
+
+model = MyModel()
+loss_fn = keras.losses.SparseCategoricalCrossentropy()
+
+# Method 1: Quick and easy
+best_lr = find_lr(model, loss_fn, train_dataset)
+print(f"Suggested LR: {best_lr}")
+
+# Now compile with optimal LR
+model.compile(optimizer=keras.optimizers.Adam(learning_rate=best_lr), loss=loss_fn)
+
+# Method 2: Full control
+lr_finder = LRFinder(model, loss_fn)
+lr_finder.range_test(train_dataset, start_lr=1e-7, end_lr=10, num_iter=100)
+lr_finder.plot()  # Shows loss vs LR curve
+best_lr = lr_finder.get_best_lr()
+```
+
+**How it Works:**
+1. Starts with a very small LR (e.g., 1e-7)
+2. Trains for a few iterations, gradually increasing LR
+3. Records loss at each LR
+4. Finds the LR where loss decreases fastest (steepest gradient)
+5. Stops if loss starts diverging
+
+**Best LR Selection:**
+- The tool suggests the LR at the steepest negative gradient
+- This is typically 1/10th to 1/3 of the LR where loss starts increasing
+- Always visually inspect the plot for confirmation
+
+---
+
 ## API Reference
 
 ### TrainingMonitor
@@ -325,6 +591,151 @@ SmartSummary(model, input_shape=None, batch_size=1, track_gradients=False)
 
 ---
 
+### Utility Functions
+
+#### lazy_flatten
+
+```python
+# PyTorch
+lazy_flatten(tensor: torch.Tensor, start_dim: int = 1) -> torch.Tensor
+
+# TensorFlow
+lazy_flatten(tensor: tf.Tensor, start_dim: int = 1) -> tf.Tensor
+```
+
+**Parameters:**
+- `tensor`: Input tensor to flatten
+- `start_dim`: Dimension to start flattening from (default: 1, preserves batch)
+
+**Returns:** Flattened tensor
+
+---
+
+#### get_flatten_size
+
+```python
+get_flatten_size(input_shape: Tuple[int, ...]) -> int
+```
+
+**Parameters:**
+- `input_shape`: Shape of tensor (excluding batch dimension)
+
+**Returns:** Total flattened size
+
+**Example:**
+- PyTorch: `get_flatten_size((64, 7, 7))` → 3136
+- TensorFlow: `get_flatten_size((7, 7, 64))` → 3136
+
+---
+
+#### loss_ncc
+
+```python
+# PyTorch
+loss_ncc(y_true: torch.Tensor, y_pred: torch.Tensor, eps: float = 1e-8) -> torch.Tensor
+
+# TensorFlow
+@tf.function
+loss_ncc(y_true: tf.Tensor, y_pred: tf.Tensor, eps: float = 1e-8) -> tf.Tensor
+```
+
+**Parameters:**
+- `y_true`: Ground truth tensor
+- `y_pred`: Predicted tensor
+- `eps`: Small constant for numerical stability (default: 1e-8)
+
+**Returns:** NCC loss value (range: 0 to 2, lower is better)
+
+---
+
+#### ncc_score
+
+```python
+ncc_score(y_true, y_pred, eps: float = 1e-8)
+```
+
+**Parameters:** Same as `loss_ncc`
+
+**Returns:** NCC similarity score (range: -1 to 1, higher is better)
+
+**Note:** `ncc_score = 1.0 - loss_ncc`
+
+---
+
+#### NCCLoss (TensorFlow only)
+
+```python
+NCCLoss(eps: float = 1e-8, name: str = "ncc_loss")
+```
+
+Keras-compatible NCC Loss class that can be used with `model.compile()`.
+
+**Example:**
+```python
+model.compile(optimizer='adam', loss=NCCLoss())
+```
+
+---
+
+#### find_lr
+
+```python
+# PyTorch
+find_lr(
+    model: nn.Module,
+    optimizer: Optimizer,
+    criterion: Callable,
+    dataloader: DataLoader,
+    device: str = 'cpu',
+    start_lr: float = 1e-7,
+    end_lr: float = 10.0,
+    num_iter: int = 100,
+    plot: bool = True
+) -> float
+
+# TensorFlow
+find_lr(
+    model: keras.Model,
+    loss_fn: Loss,
+    dataset: tf.data.Dataset,
+    optimizer: Optional[Optimizer] = None,
+    start_lr: float = 1e-7,
+    end_lr: float = 10.0,
+    num_iter: int = 100,
+    plot: bool = True
+) -> float
+```
+
+**Parameters:**
+- `model`: Model to analyze
+- `optimizer/loss_fn`: Optimizer (PyTorch) or loss function (TensorFlow)
+- `dataloader/dataset`: Training data
+- `start_lr`: Starting LR (default: 1e-7)
+- `end_lr`: Ending LR (default: 10.0)
+- `num_iter`: Number of iterations (default: 100)
+- `plot`: Show plot (default: True)
+
+**Returns:** Suggested optimal learning rate
+
+---
+
+#### LRFinder
+
+```python
+# PyTorch
+LRFinder(model, optimizer, criterion, device='cpu')
+
+# TensorFlow
+LRFinder(model, loss_fn, optimizer=None)
+```
+
+**Methods:**
+- `range_test(dataloader/dataset, start_lr, end_lr, num_iter, ...)`: Run LR range test
+- `plot(skip_start, skip_end, log_lr, show_best, save_path)`: Plot results
+- `get_best_lr()`: Get suggested learning rate
+
+---
+
 ## Comparison with Alternatives
 
 ### SmartSummary vs Other Tools
@@ -350,9 +761,11 @@ SmartSummary(model, input_shape=None, batch_size=1, track_gradients=False)
 ### PyTorch Examples
 - [example_usage.py](example_usage.py) - TrainingMonitor examples  
 - [example_smartsummary.py](example_smartsummary.py) - SmartSummary examples (6 detailed scenarios)
+- [example_utils_pytorch.py](example_utils_pytorch.py) - Utility functions examples (5 scenarios: lazy_flatten, NCC loss, LR finder, complete pipeline)
 
 ### TensorFlow Examples
 - [example_smartsummary_tf.py](example_smartsummary_tf.py) - SmartSummary examples for TensorFlow/Keras (8 detailed scenarios including multi-input models, gradient tracking, and MobileNetV2 analysis)
+- [example_utils_tf.py](example_utils_tf.py) - Utility functions examples (6 scenarios: lazy_flatten, NCC loss with Keras, LR finder, Functional API usage)
 
 ---
 
@@ -370,6 +783,15 @@ python test/test_smartsummary.py
 
 # Test SmartSummary (TensorFlow)
 python test/test_smartsummary_tf.py
+
+# Test Utility Functions (PyTorch)
+python test/test_utils_pytorch.py
+
+# Test Utility Functions (TensorFlow)
+python test/test_utils_tf.py
+
+# Test Cross-Framework Integration
+python test/test_utils_integration.py
 ```
 
 All tests pass with 100% success rate ✓
@@ -399,18 +821,26 @@ ToTf/
 │   ├── __init__.py
 │   ├── trainingmonitor.py         # TrainingMonitor implementation
 │   ├── smartsummary.py            # SmartSummary implementation (PyTorch)
+│   ├── utils.py                   # Utility functions (lazy_flatten, NCC loss, LR finder)
 │   └── README.md                  # PyTorch module docs
 ├── tenf/
 │   ├── __init__.py
 │   ├── smartsummary.py            # SmartSummary implementation (TensorFlow)
+│   ├── utils.py                   # Utility functions (lazy_flatten, NCC loss, LR finder)
 │   └── README.md                  # TensorFlow module docs
 ├── example_usage.py               # TrainingMonitor examples
 ├── example_smartsummary.py        # SmartSummary examples (PyTorch)
 ├── example_smartsummary_tf.py     # SmartSummary examples (TensorFlow)
+├── example_utils_pytorch.py       # Utility functions examples (PyTorch)
+├── example_utils_tf.py            # Utility functions examples (TensorFlow)
 ├── test/
 │   ├── test_monitor.py            # TrainingMonitor tests
 │   ├── test_integration.py        # Integration tests
-│   └── test_smartsummary.py       # SmartSummary tests
+│   ├── test_smartsummary.py       # SmartSummary tests (PyTorch)
+│   ├── test_smartsummary_tf.py    # SmartSummary tests (TensorFlow)
+│   ├── test_utils_pytorch.py      # Utility functions tests (PyTorch)
+│   ├── test_utils_tf.py           # Utility functions tests (TensorFlow)
+│   └── test_utils_integration.py  # Cross-framework integration tests
 └── README.md                      # This file
 ```
 
