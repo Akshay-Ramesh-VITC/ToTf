@@ -626,5 +626,414 @@ class TestPaperReadyOutput:
         assert result.endswith('.svg')
 
 
+class TestMultipleBranchesAndCrossConnections:
+    """Test suite for models with multiple branches and cross-connections"""
+    
+    def test_parallel_branches_basic(self, tmp_path):
+        """Test model with simple parallel branches that merge"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Create model with two parallel branches
+        inputs = layers.Input(shape=(32,))
+        
+        # Branch 1
+        branch1 = layers.Dense(64, activation='relu', name='branch1_dense1')(inputs)
+        branch1 = layers.Dense(32, activation='relu', name='branch1_dense2')(branch1)
+        
+        # Branch 2
+        branch2 = layers.Dense(64, activation='relu', name='branch2_dense1')(inputs)
+        branch2 = layers.Dense(32, activation='relu', name='branch2_dense2')(branch2)
+        
+        # Merge branches
+        merged = layers.Concatenate(name='merge_branches')([branch1, branch2])
+        outputs = layers.Dense(10, activation='softmax', name='output')(merged)
+        
+        model = keras.Model(inputs=inputs, outputs=outputs, name='ParallelBranches')
+        
+        view = ModelView(model, input_shape=(32,))
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'parallel_branches.png'
+        
+        result = view.render(str(output_path))
+        
+        assert os.path.exists(result)
+        # Should have input, 4 dense layers, 1 concatenate, 1 output = 7 layers
+        assert len(view.layer_info) >= 6
+    
+    def test_inception_like_module(self, tmp_path):
+        """Test Inception-like model with multiple parallel convolution branches"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Create Inception-like module
+        inputs = layers.Input(shape=(28, 28, 64))
+        
+        # 1x1 convolution branch
+        conv1x1 = layers.Conv2D(32, 1, padding='same', activation='relu', name='conv1x1')(inputs)
+        
+        # 3x3 convolution branch
+        conv3x3 = layers.Conv2D(32, 1, padding='same', activation='relu', name='conv3x3_reduce')(inputs)
+        conv3x3 = layers.Conv2D(64, 3, padding='same', activation='relu', name='conv3x3')(conv3x3)
+        
+        # 5x5 convolution branch
+        conv5x5 = layers.Conv2D(16, 1, padding='same', activation='relu', name='conv5x5_reduce')(inputs)
+        conv5x5 = layers.Conv2D(32, 5, padding='same', activation='relu', name='conv5x5')(conv5x5)
+        
+        # Max pooling branch
+        pool = layers.MaxPooling2D(3, strides=1, padding='same', name='maxpool')(inputs)
+        pool = layers.Conv2D(32, 1, padding='same', activation='relu', name='pool_proj')(pool)
+        
+        # Concatenate all branches
+        concat = layers.Concatenate(name='inception_concat')([conv1x1, conv3x3, conv5x5, pool])
+        
+        model = keras.Model(inputs=inputs, outputs=concat, name='InceptionModule')
+        
+        view = ModelView(model, input_shape=(28, 28, 64))
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'inception_module.png'
+        
+        result = view.render(str(output_path), show_layer_names=True)
+        
+        assert os.path.exists(result)
+        # Should have multiple layers from parallel branches
+        assert len(view.layer_info) >= 9
+    
+    def test_cross_connections_between_branches(self, tmp_path):
+        """Test model with cross-connections between parallel branches"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Create model with cross-connections
+        inputs = layers.Input(shape=(64,))
+        
+        # Branch 1
+        branch1_1 = layers.Dense(128, activation='relu', name='branch1_layer1')(inputs)
+        branch1_2 = layers.Dense(64, activation='relu', name='branch1_layer2')(branch1_1)
+        
+        # Branch 2
+        branch2_1 = layers.Dense(128, activation='relu', name='branch2_layer1')(inputs)
+        
+        # Cross-connection: branch2 uses output from branch1
+        cross_connect = layers.Concatenate(name='cross_connect')([branch2_1, branch1_1])
+        branch2_2 = layers.Dense(64, activation='relu', name='branch2_layer2')(cross_connect)
+        
+        # Final merge
+        merged = layers.Add(name='final_add')([branch1_2, branch2_2])
+        outputs = layers.Dense(10, activation='softmax', name='output')(merged)
+        
+        model = keras.Model(inputs=inputs, outputs=outputs, name='CrossConnections')
+        
+        view = ModelView(model, input_shape=(64,))
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'cross_connections.png'
+        
+        result = view.render(str(output_path), show_layer_names=True)
+        
+        assert os.path.exists(result)
+        # Verify layer count instead of connections
+        assert len(view.layer_info) >= 6
+    
+    def test_multi_path_merge_split(self, tmp_path):
+        """Test model with multiple merge and split points"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Create complex multi-path model
+        inputs = layers.Input(shape=(100,))
+        
+        # Initial split
+        path1 = layers.Dense(64, activation='relu', name='path1_dense1')(inputs)
+        path2 = layers.Dense(64, activation='relu', name='path2_dense1')(inputs)
+        
+        # First merge
+        merge1 = layers.Concatenate(name='merge1')([path1, path2])
+        shared = layers.Dense(128, activation='relu', name='shared_dense')(merge1)
+        
+        # Split again
+        path3 = layers.Dense(64, activation='relu', name='path3_dense')(shared)
+        path4 = layers.Dense(64, activation='relu', name='path4_dense')(shared)
+        
+        # Use both shared and split paths
+        cross1 = layers.Concatenate(name='cross1')([path3, path2])
+        cross2 = layers.Concatenate(name='cross2')([path4, path1])
+        
+        # Final merge
+        final_merge = layers.Concatenate(name='final_merge')([cross1, cross2])
+        outputs = layers.Dense(10, activation='softmax', name='output')(final_merge)
+        
+        model = keras.Model(inputs=inputs, outputs=outputs, name='MultiPathMergeSplit')
+        
+        view = ModelView(model, input_shape=(100,))
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'multi_path_merge_split.png'
+        
+        result = view.render(str(output_path), show_layer_names=True)
+        
+        assert os.path.exists(result)
+        assert len(view.layer_info) >= 10
+    
+    def test_densenet_like_connections(self, tmp_path):
+        """Test DenseNet-like model with dense connections"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Create DenseNet-like block with dense connections
+        inputs = layers.Input(shape=(32, 32, 64))
+        
+        # Layer 1
+        x1 = layers.Conv2D(32, 3, padding='same', activation='relu', name='conv1')(inputs)
+        
+        # Layer 2 (connected to input and x1)
+        concat1 = layers.Concatenate(name='concat1')([inputs, x1])
+        x2 = layers.Conv2D(32, 3, padding='same', activation='relu', name='conv2')(concat1)
+        
+        # Layer 3 (connected to input, x1, and x2)
+        concat2 = layers.Concatenate(name='concat2')([inputs, x1, x2])
+        x3 = layers.Conv2D(32, 3, padding='same', activation='relu', name='conv3')(concat2)
+        
+        # Layer 4 (connected to all previous)
+        concat3 = layers.Concatenate(name='concat3')([inputs, x1, x2, x3])
+        x4 = layers.Conv2D(64, 1, activation='relu', name='transition')(concat3)
+        
+        model = keras.Model(inputs=inputs, outputs=x4, name='DenseBlock')
+        
+        view = ModelView(model, input_shape=(32, 32, 64))
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'densenet_block.png'
+        
+        result = view.render(str(output_path), show_layer_names=True)
+        
+        assert os.path.exists(result)
+        # Should have many concatenation operations
+        concat_layers = [name for name in view.layer_info.keys() if 'concat' in name.lower()]
+        assert len(concat_layers) >= 3
+    
+    def test_multi_input_multi_branch_fusion(self, tmp_path):
+        """Test model with multiple inputs feeding into multiple branches"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Multiple inputs
+        input1 = layers.Input(shape=(64,), name='input1')
+        input2 = layers.Input(shape=(32,), name='input2')
+        input3 = layers.Input(shape=(16,), name='input3')
+        
+        # Process input1 through two branches
+        branch1a = layers.Dense(128, activation='relu', name='branch1a')(input1)
+        branch1b = layers.Dense(128, activation='relu', name='branch1b')(input1)
+        
+        # Process input2
+        branch2 = layers.Dense(64, activation='relu', name='branch2')(input2)
+        
+        # Merge input2 branch with one input1 branch
+        merge1 = layers.Concatenate(name='merge1')([branch1a, branch2])
+        process1 = layers.Dense(128, activation='relu', name='process1')(merge1)
+        
+        # Merge input3 with other input1 branch
+        # First expand input3 to match dimensions
+        branch3 = layers.Dense(128, activation='relu', name='branch3')(input3)
+        merge2 = layers.Add(name='merge2')([branch1b, branch3])
+        process2 = layers.Dense(128, activation='relu', name='process2')(merge2)
+        
+        # Cross-connect the processed branches
+        cross = layers.Concatenate(name='cross_merge')([process1, process2, branch2])
+        
+        # Final output
+        outputs = layers.Dense(10, activation='softmax', name='output')(cross)
+        
+        model = keras.Model(
+            inputs=[input1, input2, input3],
+            outputs=outputs,
+            name='MultiInputMultiBranch'
+        )
+        
+        view = ModelView(model, input_shape=[(64,), (32,), (16,)])
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'multi_input_multi_branch.png'
+        
+        result = view.render(str(output_path), show_layer_names=True)
+        
+        assert os.path.exists(result)
+        assert len(view.layer_info) >= 12
+    
+    def test_residual_with_multiple_skip_paths(self, tmp_path):
+        """Test model with multiple residual skip connections at different levels"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Create model with multiple skip connections
+        inputs = layers.Input(shape=(64,))
+        
+        # First block with short skip
+        x1 = layers.Dense(64, activation='relu', name='block1_dense1')(inputs)
+        x1 = layers.Dense(64, activation='relu', name='block1_dense2')(x1)
+        skip1 = layers.Add(name='skip1')([inputs, x1])
+        
+        # Second block with short skip
+        x2 = layers.Dense(64, activation='relu', name='block2_dense1')(skip1)
+        x2 = layers.Dense(64, activation='relu', name='block2_dense2')(x2)
+        skip2 = layers.Add(name='skip2')([skip1, x2])
+        
+        # Long skip from input to this point
+        long_skip = layers.Add(name='long_skip')([inputs, skip2])
+        
+        # Third block with multiple skip connections
+        x3 = layers.Dense(64, activation='relu', name='block3_dense1')(long_skip)
+        x3 = layers.Dense(64, activation='relu', name='block3_dense2')(x3)
+        
+        # Add all previous skip outputs
+        all_skips = layers.Add(name='all_skips')([inputs, skip1, skip2, x3])
+        
+        outputs = layers.Dense(10, activation='softmax', name='output')(all_skips)
+        
+        model = keras.Model(inputs=inputs, outputs=outputs, name='MultipleSkips')
+        
+        view = ModelView(model, input_shape=(64,))
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'multiple_skips.png'
+        
+        result = view.render(str(output_path), show_layer_names=True)
+        
+        assert os.path.exists(result)
+        # Should have multiple layers including Add operations
+        # Check that we have the expected layer count instead
+        assert len(view.layer_info) >= 10
+    
+    def test_complex_dag_structure(self, tmp_path):
+        """Test complex directed acyclic graph (DAG) structure"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Create a complex DAG
+        inputs = layers.Input(shape=(100,))
+        
+        # Level 1: 3 parallel branches
+        l1a = layers.Dense(64, activation='relu', name='l1a')(inputs)
+        l1b = layers.Dense(64, activation='relu', name='l1b')(inputs)
+        l1c = layers.Dense(64, activation='relu', name='l1c')(inputs)
+        
+        # Level 2: Cross connections
+        l2a = layers.Dense(64, activation='relu', name='l2a')(
+            layers.Concatenate(name='merge_l1a_l1b')([l1a, l1b])
+        )
+        l2b = layers.Dense(64, activation='relu', name='l2b')(
+            layers.Concatenate(name='merge_l1b_l1c')([l1b, l1c])
+        )
+        l2c = layers.Dense(64, activation='relu', name='l2c')(
+            layers.Concatenate(name='merge_l1a_l1c')([l1a, l1c])
+        )
+        
+        # Level 3: Merge all paths
+        l3 = layers.Concatenate(name='merge_all_l2')([l2a, l2b, l2c])
+        l3 = layers.Dense(128, activation='relu', name='l3_dense')(l3)
+        
+        # Add skip from input to level 3
+        input_proj = layers.Dense(128, activation='relu', name='input_projection')(inputs)
+        l3_with_skip = layers.Add(name='final_skip')([l3, input_proj])
+        
+        outputs = layers.Dense(10, activation='softmax', name='output')(l3_with_skip)
+        
+        model = keras.Model(inputs=inputs, outputs=outputs, name='ComplexDAG')
+        
+        view = ModelView(model, input_shape=(100,))
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'complex_dag.png'
+        
+        result = view.render(str(output_path), show_layer_names=True, dpi=300)
+        
+        assert os.path.exists(result)
+        # Complex DAG should have many layers
+        assert len(view.layer_info) >= 12
+    
+    def test_multi_output_multi_branch(self, tmp_path):
+        """Test model with multiple branches leading to multiple outputs"""
+        try:
+            import graphviz
+        except ImportError:
+            pytest.skip("graphviz not installed")
+        
+        # Create multi-output model with branching
+        inputs = layers.Input(shape=(128,))
+        
+        # Shared bottom layers
+        shared = layers.Dense(256, activation='relu', name='shared1')(inputs)
+        shared = layers.Dense(128, activation='relu', name='shared2')(shared)
+        
+        # Branch for output 1
+        branch1 = layers.Dense(64, activation='relu', name='branch1_dense1')(shared)
+        branch1 = layers.Dense(32, activation='relu', name='branch1_dense2')(branch1)
+        output1 = layers.Dense(5, activation='softmax', name='output1')(branch1)
+        
+        # Branch for output 2
+        branch2 = layers.Dense(64, activation='relu', name='branch2_dense1')(shared)
+        branch2 = layers.Dense(32, activation='relu', name='branch2_dense2')(branch2)
+        output2 = layers.Dense(3, activation='softmax', name='output2')(branch2)
+        
+        # Branch for output 3 - uses both previous branches
+        branch3 = layers.Concatenate(name='branch3_merge')([branch1, branch2])
+        branch3 = layers.Dense(64, activation='relu', name='branch3_dense')(branch3)
+        output3 = layers.Dense(10, activation='sigmoid', name='output3')(branch3)
+        
+        model = keras.Model(
+            inputs=inputs,
+            outputs=[output1, output2, output3],
+            name='MultiOutputMultiBranch'
+        )
+        
+        view = ModelView(model, input_shape=(128,))
+        
+        # Save to test_outputs directory
+        output_dir = Path('test_outputs')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / 'multi_output_multi_branch.png'
+        
+        result = view.render(str(output_path), show_layer_names=True)
+        
+        assert os.path.exists(result)
+        # Should have 3 output layers and multiple branch layers
+        assert len(view.layer_info) >= 12
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

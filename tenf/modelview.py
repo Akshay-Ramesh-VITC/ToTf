@@ -156,29 +156,19 @@ class ModelView:
             for layer in self.model.layers:
                 if hasattr(layer, '_inbound_nodes') and len(layer._inbound_nodes) > 0:
                     for node in layer._inbound_nodes:
-                        # Handle different TensorFlow/Keras versions
-                        if hasattr(node, 'inbound_layers'):
-                            inbound_layers_list = node.inbound_layers
-                        elif hasattr(node, 'parent_nodes'):
-                            # Older API
-                            inbound_layers_list = [n.layer for n in node.parent_nodes if hasattr(n, 'layer')]
-                        elif hasattr(node, 'call_args'):
-                            # Extract from call args (newer Keras 3.x)
+                        # Get parent nodes (inbound connections)
+                        if hasattr(node, 'parent_nodes'):
                             inbound_layers_list = []
-                            if hasattr(node, 'parent_nodes'):
-                                for pn in node.parent_nodes:
-                                    if hasattr(pn, 'layer'):
-                                        inbound_layers_list.append(pn.layer)
+                            for parent_node in node.parent_nodes:
+                                # The operation attribute contains the actual layer
+                                if hasattr(parent_node, 'operation'):
+                                    inbound_layers_list.append(parent_node.operation)
                         else:
-                            # Try to get from node's operation
+                            # Fallback for older Keras versions
                             inbound_layers_list = []
-                            if hasattr(node, 'operation') and hasattr(node.operation, '_inbound_nodes'):
-                                for n in node.operation._inbound_nodes:
-                                    if hasattr(n, 'layer'):
-                                        inbound_layers_list.append(n.layer)
                         
                         for inbound_layer in inbound_layers_list:
-                            # Find layer IDs
+                            # Find layer IDs by matching layer objects
                             src_id = None
                             dst_id = None
                             
@@ -189,7 +179,10 @@ class ModelView:
                                     dst_id = lid
                             
                             if src_id and dst_id and src_id != dst_id:
-                                self.connections.append((src_id, dst_id))
+                                conn = (src_id, dst_id)
+                                # Avoid duplicate connections
+                                if conn not in self.connections:
+                                    self.connections.append(conn)
     
     def _infer_shapes(self, dummy_inputs):
         """Infer input and output shapes for each layer"""
