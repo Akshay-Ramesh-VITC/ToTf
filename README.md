@@ -40,6 +40,16 @@ Framework-agnostic "missing" functions that save time and improve code quality:
 - **`LRFinder`** - Full-featured LR range test class with plotting
 - **Use case**: Automatically discover the best learning rate before training (fast.ai style), avoid manual tuning
 
+### 📊 ModelView (NEW! - TensorFlow)
+Publication-quality neural network architecture diagrams (like torchview for PyTorch):
+- **High-resolution outputs** - PNG, PDF, SVG for research papers (300-600 DPI)
+- **Automatic graph layout** - Beautiful visualizations with minimal configuration
+- **Comprehensive annotations** - Layer types, shapes, parameter counts
+- **Complex architectures** - Residual connections, multi-input/output, branching
+- **Customizable styling** - Colors, fonts, layouts for different aesthetics
+- **Export formats** - JSON summaries, text tables, visual diagrams
+- **Use case**: Generate publication-ready architecture diagrams for research papers, presentations, and documentation
+
 ## Installation
 
 ```bash
@@ -50,6 +60,7 @@ pip install -r requirements.txt
 - [Quick Start](#quick-start)
 - [TrainingMonitor Guide](#trainingmonitor-guide)
 - [SmartSummary Guide](#smartsummary-guide)
+- [ModelView Guide](#modelview-guide)
 - [Utility Functions Guide](#utility-functions-guide)
 - [API Reference](#api-reference)
 - [Examples](#examples)
@@ -139,6 +150,35 @@ for bn in bottlenecks:
 # Track gradients for debugging
 summary = SmartSummary(model, input_shape=(224, 224, 3), track_gradients=True)
 summary.show()
+```
+
+#### ModelView (TensorFlow) - NEW!
+
+```python
+from ToTf.tenf import ModelView, draw_graph
+
+# Quick visualization
+model = tf.keras.Sequential([...])
+draw_graph(model, input_shape=(224, 224, 3), save_path='model.png')
+
+# Advanced usage with customization
+view = ModelView(model, input_shape=(224, 224, 3))
+view.show()  # Text summary
+
+# High-resolution PNG for papers (300 DPI)
+view.render('architecture.png', dpi=300, show_shapes=True, show_params=True)
+
+# PDF for LaTeX documents
+view.render('architecture.pdf', format='pdf')
+
+# SVG for perfect scaling
+view.render('architecture.svg', format='svg')
+
+# Horizontal layout for wide figures
+view.render('architecture_wide.png', rankdir='LR', dpi=600)
+
+# Export summary as JSON
+view.save_summary_json('model_summary.json')
 ```
 
 #### Utility Functions (TensorFlow)
@@ -318,6 +358,240 @@ SmartSummary identifies bottlenecks based on:
 - **Large outputs**: Intermediate tensors >10MB
 
 Each bottleneck gets a score - higher scores indicate more critical optimization opportunities.
+
+---
+
+## ModelView Guide
+
+### Overview
+
+ModelView generates **publication-quality neural network architecture diagrams** for TensorFlow/Keras models, similar to torchview for PyTorch. Perfect for research papers, presentations, and documentation.
+
+**Key Features:**
+- 🎨 High-resolution outputs (300-600 DPI) suitable for academic papers
+- 📄 Multiple formats: PNG, PDF, SVG
+- 🎯 Automatic graph layout with beautiful styling
+- 📊 Shows layer types, shapes, and parameter counts
+- 🔀 Handles complex architectures (residual, multi-input/output, branching)
+- ⚙️ Customizable styling (colors, fonts, layouts)
+
+### Quick Start
+
+```python
+from ToTf.tenf import ModelView, draw_graph
+import tensorflow as tf
+
+# Create your model
+model = tf.keras.Sequential([
+    tf.keras.layers.Conv2D(32, 3, activation='relu', input_shape=(28, 28, 1)),
+    tf.keras.layers.MaxPooling2D(2),
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(10, activation='softmax')
+])
+
+# Quickest way - one-liner
+draw_graph(model, input_shape=(28, 28, 1), save_path='model.png')
+```
+
+### Basic Usage
+
+```python
+from ToTf.tenf import ModelView
+
+# Initialize ModelView
+view = ModelView(model, input_shape=(28, 28, 1))
+
+# Show text summary
+view.show()
+
+# Render high-resolution PNG
+view.render('model.png', dpi=300)
+```
+
+### Output Formats
+
+```python
+# PNG - for presentations and quick viewing
+view.render('architecture.png', format='png', dpi=300)
+
+# PDF - for LaTeX documents (vector graphics)
+view.render('architecture.pdf', format='pdf')
+
+# SVG - for perfect scaling in any size
+view.render('architecture.svg', format='svg')
+```
+
+### Layout Options
+
+```python
+# Vertical layout (top-to-bottom) - default
+view.render('model_vertical.png', rankdir='TB')
+
+# Horizontal layout (left-to-right) - for wide figures
+view.render('model_horizontal.png', rankdir='LR')
+```
+
+### Customization
+
+```python
+# Control what to display
+view.render(
+    'model_custom.png',
+    show_shapes=True,        # Display tensor shapes
+    show_layer_names=True,   # Display layer names
+    show_params=True,        # Display parameter counts
+    dpi=600                  # Extra high resolution
+)
+
+# Custom node styling
+custom_node_style = {
+    'shape': 'box',
+    'style': 'rounded,filled',
+    'fillcolor': '#f0f0f0',
+    'fontname': 'Helvetica',
+    'fontsize': '11',
+    'color': '#333333',
+    'penwidth': '2'
+}
+
+# Custom edge styling
+custom_edge_style = {
+    'color': '#666666',
+    'penwidth': '2',
+    'arrowsize': '1.0'
+}
+
+view.render(
+    'model_styled.png',
+    node_style=custom_node_style,
+    edge_style=custom_edge_style
+)
+```
+
+### Complex Architectures
+
+**Multi-Input Models:**
+```python
+# Model with text and image inputs
+text_input = keras.Input(shape=(100,), name='text')
+image_input = keras.Input(shape=(64, 64, 3), name='image')
+# ... build model ...
+
+model = keras.Model(inputs=[text_input, image_input], outputs=outputs)
+
+# Visualize - provide list of input shapes
+view = ModelView(model, input_shape=[(100,), (64, 64, 3)])
+view.render('multimodal.png', rankdir='LR', dpi=300)
+```
+
+**Residual Networks:**
+```python
+# ResNet-like architecture with skip connections
+inputs = keras.Input(shape=(32, 32, 3))
+x = layers.Conv2D(64, 3, padding='same')(inputs)
+residual = x
+x = layers.Conv2D(64, 3, padding='same')(x)
+x = layers.Add()([x, residual])  # Skip connection
+# ... more layers ...
+
+model = keras.Model(inputs=inputs, outputs=outputs)
+view = ModelView(model, input_shape=(32, 32, 3))
+view.render('resnet.png', dpi=400)
+```
+
+**Attention/Transformer Models:**
+```python
+# Transformer with attention mechanism
+inputs = keras.Input(shape=(50, 128))
+attention = layers.MultiHeadAttention(num_heads=8, key_dim=32)(inputs, inputs)
+# ... build transformer ...
+
+view = ModelView(model, input_shape=(50, 128))
+view.render('transformer.png', rankdir='TB', dpi=300)
+```
+
+### Export and Analysis
+
+```python
+# Get summary as dictionary
+summary_dict = view.get_summary_dict()
+print(f"Total layers: {summary_dict['num_layers']}")
+print(f"Total parameters: {summary_dict['total_parameters']:,}")
+
+# Save summary as JSON
+view.save_summary_json('model_architecture.json')
+
+# Text-based summary with connections
+view.show(detailed=True)
+```
+
+### Best Practices for Publications
+
+#### For Research Papers (LaTeX)
+
+```python
+# Use PDF format for LaTeX - perfect quality at any zoom
+view.render('paper_figure.pdf', format='pdf', dpi=300)
+
+# Or high-DPI PNG if journal requires raster
+view.render('paper_figure.png', format='png', dpi=600)
+```
+
+#### For Presentations
+
+```python
+# Standard resolution PNG
+view.render('presentation_arch.png', dpi=300, rankdir='LR')
+```
+
+#### For Documentation/Web
+
+```python
+# SVG for responsive scaling
+view.render('docs_architecture.svg', format='svg')
+
+# Or moderate PNG
+view.render('docs_architecture.png', dpi=150)
+```
+
+### Installation Requirements
+
+ModelView requires Graphviz:
+
+```bash
+# Python package
+pip install graphviz
+
+# System graphviz (required!)
+# Ubuntu/Debian:
+sudo apt-get install graphviz
+
+# macOS:
+brew install graphviz
+
+# Windows:
+# Download from https://graphviz.org/download/
+# Add to PATH after installation
+```
+
+### Examples
+
+See `example_modelview_tf.py` for comprehensive examples including:
+- Simple Sequential models
+- CNN architectures
+- ResNet with skip connections
+- Multi-input models
+- Transformer/Attention models
+- Autoencoders
+- Custom styling
+
+Run examples:
+```bash
+cd ToTf
+python example_modelview_tf.py
+```
+
+All generated diagrams will be in the `outputs/` directory.
 
 ---
 

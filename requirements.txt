@@ -7,6 +7,10 @@ numpy>=1.24.0
 # TensorFlow support (now fully implemented)
 tensorflow>=2.13.0
 
+# Visualization dependencies for ModelView
+graphviz>=0.20.0
+Pillow>=10.0.0
+
 # Development dependencies
 # pytest>=7.4.0
 # black>=23.0.0
