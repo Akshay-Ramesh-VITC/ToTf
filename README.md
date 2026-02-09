@@ -16,6 +16,7 @@ Real-time training progress tracking with automatic logging:
 Advanced model analysis with intelligent insights (UNIQUE features vs torchsummary/torchinfo):
 - **Bottleneck detection** - automatically identifies optimization opportunities
 - **Gradient tracking** - reveals training instabilities and vanishing/exploding gradients
+- **Loss curve analysis** - diagnose training dynamics (convergence, overfitting, divergence, plateau detection)
 - **Comprehensive analysis** - layer shapes, parameters, and memory usage
 - **Export capabilities** - save to files or export as dictionaries
 - **Complex architectures** - works with nested models, residual connections, etc.
@@ -83,6 +84,7 @@ conda install -c conda-forge graphviz
 📚 **Detailed Guides:**
 - **[ModelView Quick Start - PyTorch](QUICKSTART_MODELVIEW_PYTORCH.md)** - Get started with PyTorch diagrams in 5 minutes
 - **[ModelView Quick Start - TensorFlow](QUICKSTART_MODELVIEW.md)** - Get started with TensorFlow diagrams in 5 minutes
+- **[Loss Curve Analysis Guide](LOSS_CURVE_ANALYSIS.md)** - Diagnose training dynamics and detect overfitting
 - **[PyTorch ModelView Implementation](PYTORCH_MODELVIEW_IMPLEMENTATION.md)** - PyTorch-specific implementation details
 - **[ModelView Implementation Details](MODELVIEW_IMPLEMENTATION_SUMMARY.md)** - Technical specifications and features
 - **[Utilities Implementation](UTILITIES_IMPLEMENTATION_SUMMARY.md)** - Detailed utility functions documentation
@@ -92,6 +94,8 @@ conda install -c conda-forge graphviz
 - `example_modelview_pytorch.py` - PyTorch ModelView examples (6+ comprehensive examples)
 - `example_modelview_tf.py` - TensorFlow ModelView examples (8+ comprehensive examples)
 - `example_smartsummary.py` / `example_smartsummary_tf.py` - SmartSummary usage
+- `example_loss_analysis_pytorch.py` - Loss curve analysis examples (PyTorch)
+- `example_loss_analysis_tf.py` - Loss curve analysis examples (TensorFlow)
 - `example_utils_pytorch.py` / `example_utils_tf.py` - Utility functions
 
 🧪 **Verification:**
@@ -392,6 +396,25 @@ summary = SmartSummary(model, input_size=(3, 224, 224), device='cuda')
 summary = SmartSummary(model)  # Just count parameters, no shape inference
 ```
 
+**7. Analyze Training Loss Curves (PyTorch)**
+```python
+# During training loop, collect losses
+train_losses = []
+val_losses = []
+
+for epoch in range(epochs):
+    train_loss = train_epoch(model, train_loader, optimizer)
+    val_loss = validate_epoch(model, val_loader)
+    
+    train_losses.append(train_loss)
+    val_losses.append(val_loss)
+
+# Analyze training dynamics
+summary = SmartSummary(model, input_size=(3, 224, 224))
+result = summary.analyze_loss_curve(train_losses, val_losses)
+# Detects: overfitting, divergence, oscillation, plateau, convergence
+```
+
 #### TensorFlow/Keras
 
 **1. Quick Model Analysis**
@@ -434,6 +457,59 @@ summary.compare_with_keras_summary()  # Shows both summaries
 summary.save_to_file("model_analysis.txt")
 data = summary.to_dict()  # For programmatic access
 ```
+
+**7. Analyze Training Loss Curves**
+```python
+# Collect losses during training
+train_losses = [2.5, 2.1, 1.8, 1.6, 1.5, 1.45, 1.42, 1.41]
+val_losses = [2.6, 2.2, 1.9, 1.7, 1.65, 1.62, 1.60, 1.59]
+
+# Analyze training dynamics
+result = summary.analyze_loss_curve(train_losses, val_losses)
+# Automatically detects: overfitting, divergence, oscillation, plateau, convergence
+# Provides actionable recommendations for improvement
+
+# Programmatic use (no printing)
+result = summary.analyze_loss_curve(train_losses, val_losses, verbose=False)
+if result['status'] == 'Overfitting Detected':
+    print("Early stopping recommended!")
+```
+
+### Loss Curve Analysis
+
+SmartSummary can analyze your training loss curves to diagnose training health:
+
+**Detects:**
+- ✅ **Healthy Convergence** - Loss decreasing and stabilizing properly
+- ⚠️ **Overfitting** - Training loss decreasing while validation loss increases
+- ⚠️ **Divergence** - Loss increasing (training instability)
+- 📊 **Plateau** - Loss stopped improving
+- 📈 **Oscillation** - High variance in loss values
+- 🐌 **Slow Convergence** - Training progressing too slowly
+
+**Provides:**
+- Trend analysis (slope, improvement percentage)
+- Stability metrics (coefficient of variation)
+- Actionable recommendations (learning rate adjustments, regularization, etc.)
+
+**Quick Example:**
+```python
+# During training
+history = model.fit(x_train, y_train, validation_data=(x_val, y_val), epochs=20)
+
+# Analyze the training
+result = summary.analyze_loss_curve(
+    train_losses=history.history['loss'],
+    val_losses=history.history['val_loss']
+)
+
+print(f"Status: {result['status']}")
+print(f"Improvement: {result['metrics']['improvement_percent']:.2f}%")
+for rec in result['recommendations']:
+    print(f"  • {rec}")
+```
+
+See **[Loss Curve Analysis Documentation](LOSS_CURVE_ANALYSIS.md)** for detailed examples and integration patterns.
 
 ### Bottleneck Detection
 

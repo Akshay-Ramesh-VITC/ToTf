@@ -353,3 +353,278 @@ class SmartSummary:
             f.write(captured_output.getvalue())
         
         print(f"Summary saved to {filename}")
+    
+    def analyze_loss_curve(
+        self,
+        train_losses: List[float],
+        val_losses: Optional[List[float]] = None,
+        window_size: int = 5,
+        verbose: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Analyze the nature of training loss curve(s) to understand training dynamics.
+        
+        This method identifies patterns such as:
+        - Convergence: Loss is decreasing and stabilizing
+        - Divergence: Loss is increasing (training instability)
+        - Oscillation: High variance in loss values
+        - Plateau: Loss has stopped improving
+        - Overfitting: Training loss decreases while validation loss increases
+        
+        Args:
+            train_losses: List of training loss values over epochs
+            val_losses: Optional list of validation loss values over epochs
+            window_size: Window size for moving average smoothing (default: 5)
+            verbose: Whether to print analysis results (default: True)
+        
+        Returns:
+            Dictionary containing:
+            - 'status': Overall training status
+            - 'trend': Direction of loss movement
+            - 'stability': Measure of oscillation/variance
+            - 'recommendations': List of suggestions
+            - 'metrics': Detailed metrics about the loss curve
+        
+        Example:
+            >>> train_losses = [2.5, 2.1, 1.8, 1.6, 1.5, 1.45, 1.42, 1.41]
+            >>> val_losses = [2.6, 2.2, 1.9, 1.7, 1.8, 1.9, 2.0, 2.1]
+            >>> result = smart_summary.analyze_loss_curve(train_losses, val_losses)
+            >>> print(result['status'])  # 'Overfitting Detected'
+        """
+        if not train_losses or len(train_losses) < 2:
+            return {
+                "status": "Insufficient Data",
+                "trend": "Unknown",
+                "stability": "Unknown",
+                "recommendations": ["Provide at least 2 epochs of training data"],
+                "metrics": {}
+            }
+        
+        train_losses = np.array(train_losses, dtype=np.float32)
+        n_epochs = len(train_losses)
+        
+        # Calculate moving average for smoothing
+        def moving_average(data, window):
+            if len(data) < window:
+                return data
+            weights = np.ones(window) / window
+            return np.convolve(data, weights, mode='valid')
+        
+        smoothed_train = moving_average(train_losses, min(window_size, len(train_losses)))
+        
+        # Calculate key metrics
+        initial_loss = float(train_losses[0])
+        final_loss = float(train_losses[-1])
+        min_loss = float(np.min(train_losses))
+        max_loss = float(np.max(train_losses))
+        
+        # Calculate trend (slope)
+        epochs_idx = np.arange(len(smoothed_train))
+        if len(smoothed_train) > 1:
+            trend_slope = np.polyfit(epochs_idx, smoothed_train, 1)[0]
+        else:
+            trend_slope = 0.0
+        
+        # Calculate variance and coefficient of variation
+        loss_variance = float(np.var(train_losses))
+        loss_std = float(np.std(train_losses))
+        mean_loss = float(np.mean(train_losses))
+        coef_variation = (loss_std / mean_loss * 100) if mean_loss != 0 else 0.0
+        
+        # Calculate recent trend (last 30% of epochs)
+        recent_window = max(3, int(n_epochs * 0.3))
+        recent_losses = train_losses[-recent_window:]
+        recent_slope = np.polyfit(np.arange(len(recent_losses)), recent_losses, 1)[0]
+        
+        # Improvement percentage
+        improvement = ((initial_loss - final_loss) / initial_loss * 100) if initial_loss != 0 else 0.0
+        
+        # Determine training status
+        status_messages = []
+        recommendations = []
+        
+        # Check for divergence
+        if trend_slope > 0.001 or improvement < -5:
+            status = "Diverging"
+            status_messages.append("⚠️ Loss is INCREASING - training instability detected")
+            recommendations.extend([
+                "Reduce learning rate significantly (try 0.1x current value)",
+                "Check for gradient explosion (use gradient clipping)",
+                "Verify data preprocessing and labels are correct",
+                "Consider using a simpler model architecture"
+            ])
+        
+        # Check for plateau
+        elif abs(recent_slope) < 0.0001 and n_epochs > 10:
+            status = "Plateau"
+            status_messages.append("📊 Loss has plateaued - minimal improvement in recent epochs")
+            recommendations.extend([
+                "Consider reducing learning rate to escape plateau",
+                "Try learning rate scheduling or cyclical learning rates",
+                "Check if model has sufficient capacity",
+                "Evaluate if current performance is acceptable"
+            ])
+        
+        # Check for high oscillation
+        elif coef_variation > 20:
+            status = "Oscillating"
+            status_messages.append("📈 High oscillation in loss values detected")
+            recommendations.extend([
+                "Reduce learning rate to stabilize training",
+                "Increase batch size for more stable gradients",
+                "Consider using gradient clipping",
+                "Check for outliers or noise in training data"
+            ])
+        
+        # Check for good convergence
+        elif improvement > 20 and abs(recent_slope) < 0.01:
+            status = "Converging Well"
+            status_messages.append("✅ Loss is converging nicely")
+            recommendations.extend([
+                "Training appears healthy - continue monitoring",
+                "Consider early stopping if validation loss plateaus"
+            ])
+        
+        # Slow improvement
+        elif improvement > 5:
+            status = "Converging Slowly"
+            status_messages.append("🐌 Loss is decreasing but slowly")
+            recommendations.extend([
+                "Consider slightly increasing learning rate",
+                "Verify model has sufficient capacity for the task",
+                "Check if data preprocessing is optimal"
+            ])
+        
+        else:
+            status = "Stable"
+            status_messages.append("📍 Loss is relatively stable")
+            recommendations.append("Continue monitoring training progress")
+        
+        # Analyze validation losses if provided
+        overfitting_detected = False
+        if val_losses is not None and len(val_losses) >= 2:
+            val_losses = np.array(val_losses, dtype=np.float32)
+            
+            if len(val_losses) != len(train_losses):
+                recommendations.append(
+                    f"⚠️ Warning: Train and validation losses have different lengths "
+                    f"({len(train_losses)} vs {len(val_losses)})"
+                )
+            
+            val_initial = float(val_losses[0])
+            val_final = float(val_losses[-1])
+            val_min = float(np.min(val_losses))
+            
+            # Check for overfitting: train loss decreasing, val loss increasing
+            recent_val = val_losses[-recent_window:]
+            val_recent_slope = np.polyfit(np.arange(len(recent_val)), recent_val, 1)[0]
+            
+            if recent_slope < -0.001 and val_recent_slope > 0.005:
+                status = "Overfitting Detected"
+                overfitting_detected = True
+                status_messages.append(
+                    "⚠️ OVERFITTING: Training loss decreasing but validation loss increasing"
+                )
+                recommendations.extend([
+                    "Stop training or use early stopping",
+                    "Increase regularization (L1/L2, dropout)",
+                    "Add more training data if possible",
+                    "Reduce model complexity",
+                    "Use data augmentation"
+                ])
+            
+            # Check for validation loss not improving
+            elif val_final > val_min * 1.05 and n_epochs > 5:
+                status_messages.append(
+                    "⚠️ Validation loss stopped improving (potential overfitting)"
+                )
+                if not overfitting_detected:
+                    recommendations.extend([
+                        "Consider early stopping",
+                        "Monitor validation loss closely"
+                    ])
+        
+        # Determine trend description
+        if trend_slope < -0.01:
+            trend = "Decreasing"
+        elif trend_slope > 0.01:
+            trend = "Increasing"
+        else:
+            trend = "Stable"
+        
+        # Determine stability
+        if coef_variation < 5:
+            stability = "Very Stable"
+        elif coef_variation < 15:
+            stability = "Stable"
+        elif coef_variation < 30:
+            stability = "Moderately Unstable"
+        else:
+            stability = "Highly Unstable"
+        
+        # Compile metrics
+        metrics = {
+            "n_epochs": n_epochs,
+            "initial_loss": initial_loss,
+            "final_loss": final_loss,
+            "min_loss": min_loss,
+            "max_loss": max_loss,
+            "improvement_percent": improvement,
+            "trend_slope": float(trend_slope),
+            "recent_slope": float(recent_slope),
+            "variance": loss_variance,
+            "std_dev": loss_std,
+            "mean_loss": mean_loss,
+            "coefficient_of_variation": coef_variation
+        }
+        
+        if val_losses is not None:
+            metrics["val_initial_loss"] = float(val_losses[0])
+            metrics["val_final_loss"] = float(val_losses[-1])
+            metrics["val_min_loss"] = float(np.min(val_losses))
+            metrics["val_improvement_percent"] = (
+                (float(val_losses[0]) - float(val_losses[-1])) / float(val_losses[0]) * 100
+                if val_losses[0] != 0 else 0.0
+            )
+        
+        result = {
+            "status": status,
+            "trend": trend,
+            "stability": stability,
+            "recommendations": recommendations,
+            "metrics": metrics
+        }
+        
+        # Print analysis if verbose
+        if verbose:
+            print("\n" + "="*80)
+            print(f"{'Loss Curve Analysis':^80}")
+            print("="*80)
+            
+            for msg in status_messages:
+                print(f"\n{msg}")
+            
+            print(f"\n📊 Training Statistics:")
+            print(f"   • Epochs: {n_epochs}")
+            print(f"   • Initial Loss: {initial_loss:.4f}")
+            print(f"   • Final Loss: {final_loss:.4f}")
+            print(f"   • Minimum Loss: {min_loss:.4f}")
+            print(f"   • Improvement: {improvement:.2f}%")
+            print(f"   • Trend: {trend} (slope: {trend_slope:.6f})")
+            print(f"   • Stability: {stability} (CV: {coef_variation:.2f}%)")
+            
+            if val_losses is not None:
+                print(f"\n📊 Validation Statistics:")
+                print(f"   • Initial Val Loss: {metrics['val_initial_loss']:.4f}")
+                print(f"   • Final Val Loss: {metrics['val_final_loss']:.4f}")
+                print(f"   • Minimum Val Loss: {metrics['val_min_loss']:.4f}")
+                print(f"   • Val Improvement: {metrics['val_improvement_percent']:.2f}%")
+            
+            if recommendations:
+                print(f"\n💡 Recommendations:")
+                for i, rec in enumerate(recommendations, 1):
+                    print(f"   {i}. {rec}")
+            
+            print("\n" + "="*80)
+        
+        return result
