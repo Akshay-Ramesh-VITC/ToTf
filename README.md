@@ -40,14 +40,17 @@ Framework-agnostic "missing" functions that save time and improve code quality:
 - **`LRFinder`** - Full-featured LR range test class with plotting
 - **Use case**: Automatically discover the best learning rate before training (fast.ai style), avoid manual tuning
 
-### 📊 ModelView (NEW! - TensorFlow)
-Publication-quality neural network architecture diagrams (like torchview for PyTorch):
+### 📊 ModelView (NEW! - PyTorch & TensorFlow)
+Publication-quality neural network architecture diagrams for both frameworks:
+- **PyTorch support** - Wraps torchview for comprehensive PyTorch model visualization
+- **TensorFlow support** - Native implementation for Keras models
 - **High-resolution outputs** - PNG, PDF, SVG for research papers (300-600 DPI)
 - **Automatic graph layout** - Beautiful visualizations with minimal configuration
 - **Comprehensive annotations** - Layer types, shapes, parameter counts
 - **Complex architectures** - Residual connections, multi-input/output, branching
 - **Customizable styling** - Colors, fonts, layouts for different aesthetics
 - **Export formats** - JSON summaries, text tables, visual diagrams
+- **Unified API** - Same interface for both PyTorch and TensorFlow
 - **Use case**: Generate publication-ready architecture diagrams for research papers, presentations, and documentation
 
 ## Installation
@@ -58,11 +61,11 @@ pip install -r requirements.txt
 
 ### System Requirements for ModelView
 
-ModelView requires Graphviz for rendering diagrams:
+ModelView requires Graphviz and torchview for rendering diagrams:
 
 ```bash
-# Install Python package
-pip install graphviz
+# Install Python packages
+pip install graphviz torchview
 
 # Install system Graphviz
 # Ubuntu/Debian:
@@ -78,18 +81,22 @@ conda install -c conda-forge graphviz
 ## Documentation
 
 📚 **Detailed Guides:**
-- **[ModelView Quick Start](QUICKSTART_MODELVIEW.md)** - Get started with architecture diagrams in 5 minutes
+- **[ModelView Quick Start - PyTorch](QUICKSTART_MODELVIEW_PYTORCH.md)** - Get started with PyTorch diagrams in 5 minutes
+- **[ModelView Quick Start - TensorFlow](QUICKSTART_MODELVIEW.md)** - Get started with TensorFlow diagrams in 5 minutes
+- **[PyTorch ModelView Implementation](PYTORCH_MODELVIEW_IMPLEMENTATION.md)** - PyTorch-specific implementation details
 - **[ModelView Implementation Details](MODELVIEW_IMPLEMENTATION_SUMMARY.md)** - Technical specifications and features
 - **[Utilities Implementation](UTILITIES_IMPLEMENTATION_SUMMARY.md)** - Detailed utility functions documentation
 - **[TensorFlow Implementation](TENSORFLOW_IMPLEMENTATION_SUMMARY.md)** - TensorFlow-specific features and design
 
 📖 **Examples:**
-- `example_modelview_tf.py` - 8+ comprehensive ModelView examples
+- `example_modelview_pytorch.py` - PyTorch ModelView examples (6+ comprehensive examples)
+- `example_modelview_tf.py` - TensorFlow ModelView examples (8+ comprehensive examples)
 - `example_smartsummary.py` / `example_smartsummary_tf.py` - SmartSummary usage
 - `example_utils_pytorch.py` / `example_utils_tf.py` - Utility functions
 
 🧪 **Verification:**
-- Run `python verify_modelview.py` to test ModelView installation
+- Run `python verify_modelview_pytorch.py` to test PyTorch ModelView installation
+- Run `python verify_modelview.py` to test TensorFlow ModelView installation
 - Run `pytest test/` to run full test suite
 
 ## Table of Contents
@@ -167,6 +174,45 @@ loss = loss_ncc(ground_truth, prediction)  # Robust to intensity variations
 # 3. Find optimal learning rate
 best_lr = find_lr(model, optimizer, criterion, train_loader)
 print(f"Use learning rate: {best_lr}")
+```
+
+#### ModelView (PyTorch) - NEW!
+
+```python
+from ToTf.pytorch import ModelView, draw_graph
+
+# Quick visualization
+model = MyModel()
+draw_graph(model, input_size=(3, 224, 224), save_path='model.png')
+
+# Advanced usage with customization
+view = ModelView(model, input_size=(3, 224, 224))
+view.show()  # Text summary powered by torchview
+
+# High-resolution PNG for papers (300 DPI)
+view.render('architecture.png', dpi=300, show_shapes=True)
+
+# PDF for LaTeX documents
+view.render('architecture.pdf', format='pdf')
+
+# SVG for perfect scaling
+view.render('architecture.svg', format='svg')
+
+# Horizontal layout for wide figures
+view.render('architecture_wide.png', rankdir='LR', dpi=600)
+
+# Advanced torchview features
+view_detailed = ModelView(
+    model, 
+    input_size=(3, 224, 224),
+    depth=4,  # Show nested modules  
+    expand_nested=True,  # Expand Sequential blocks
+    hide_inner_tensors=False  # Show all tensors
+)
+view_detailed.render('detailed_architecture.png', dpi=300)
+
+# Export summary as JSON
+view.save_summary_json('model_summary.json')
 ```
 
 ### TensorFlow/Keras
