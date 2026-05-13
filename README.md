@@ -82,13 +82,13 @@ conda install -c conda-forge graphviz
 ## Documentation
 
 📚 **Detailed Guides:**
-- **[ModelView Quick Start - PyTorch](QUICKSTART_MODELVIEW_PYTORCH.md)** - Get started with PyTorch diagrams in 5 minutes
-- **[ModelView Quick Start - TensorFlow](QUICKSTART_MODELVIEW.md)** - Get started with TensorFlow diagrams in 5 minutes
-- **[Loss Curve Analysis Guide](LOSS_CURVE_ANALYSIS.md)** - Diagnose training dynamics and detect overfitting
-- **[PyTorch ModelView Implementation](PYTORCH_MODELVIEW_IMPLEMENTATION.md)** - PyTorch-specific implementation details
-- **[ModelView Implementation Details](MODELVIEW_IMPLEMENTATION_SUMMARY.md)** - Technical specifications and features
-- **[Utilities Implementation](UTILITIES_IMPLEMENTATION_SUMMARY.md)** - Detailed utility functions documentation
-- **[TensorFlow Implementation](TENSORFLOW_IMPLEMENTATION_SUMMARY.md)** - TensorFlow-specific features and design
+- **[ModelView Quick Start - PyTorch](./docs/QUICKSTART_MODELVIEW_PYTORCH.md)** - Get started with PyTorch diagrams in 5 minutes
+- **[ModelView Quick Start - TensorFlow](./docs/QUICKSTART_MODELVIEW.md)** - Get started with TensorFlow diagrams in 5 minutes
+- **[Loss Curve Analysis Guide](./docs/LOSS_CURVE_ANALYSIS.md)** - Diagnose training dynamics and detect overfitting
+- **[PyTorch ModelView Implementation](./docs/PYTORCH_MODELVIEW_IMPLEMENTATION.md)** - PyTorch-specific implementation details
+- **[ModelView Implementation Details](./docs/MODELVIEW_IMPLEMENTATION_SUMMARY.md)** - Technical specifications and features
+- **[Utilities Implementation](./docs/UTILITIES_IMPLEMENTATION_SUMMARY.md)** - Detailed utility functions documentation
+- **[TensorFlow Implementation](./docs/TENSORFLOW_IMPLEMENTATION_SUMMARY.md)** - TensorFlow-specific features and design
 
 📖 **Examples:**
 - `example_modelview_pytorch.py` - PyTorch ModelView examples (6+ comprehensive examples)
@@ -509,7 +509,7 @@ for rec in result['recommendations']:
     print(f"  • {rec}")
 ```
 
-See **[Loss Curve Analysis Documentation](LOSS_CURVE_ANALYSIS.md)** for detailed examples and integration patterns.
+See **[Loss Curve Analysis Documentation](./docs/LOSS_CURVE_ANALYSIS.md)** for detailed examples and integration patterns.
 
 ### Bottleneck Detection
 
