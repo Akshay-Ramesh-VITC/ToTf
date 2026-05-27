@@ -21,12 +21,19 @@ Advanced model analysis with intelligent insights (UNIQUE features vs torchsumma
 - **Export capabilities** - save to files or export as dictionaries
 - **Complex architectures** - works with nested models, residual connections, etc.
 - **Cross-framework support** - Available for both PyTorch and TensorFlow/Keras
+### ✨ What's New (Added NEW!)
+
+- **Top-level dynamic dispatcher (`ToTf`)**: a centralized backend dispatcher now exposes core components from the package root so users can `from ToTf import SmartSummary, ModelView, draw_graph, get_component` instead of importing backend-specific subpackages.
+- **`get_component(name, backend_name=...)`**: load utilities or components dynamically from the detected or selected backend (replaces importing `ToTf.pytorch.*` or `ToTf.tenf.*` directly).
+- **`draw_graph()` dispatcher**: call `ToTf.draw_graph(...)` and the package will route the call to the active backend's implementation (convenience wrapper for `ModelView` rendering).
+- **Examples updated**: example scripts were updated to use the top-level `ToTf` API and include a small `sys.path` guideline to run examples from `ToTf/examples/` when not installed as a package.
+
 - **Dry-run init & gradient checks** - runs a lightweight forward/backward pass to flag zero or abnormally large initial gradients and suspicious initialization scales (Xavier/He heuristics)
 - **Receptive Field bookkeeping** - per-layer RF/jump/start propagation supporting dilations and asymmetric kernels across branches; emits warnings when inputs to merges have mismatched RF metadata
 - **Precise activation memory profiling** - optional `keep_activations=True` stores captured output tensors and uses actual tensor sizes for a more accurate memory profile. PyTorch also supports `keep_activations_strong=True` with `max_saved_activation_bytes` to retain tensors for deeper analysis while avoiding OOM.
 - **Configurable thresholds** - constructor options control sensitivity: `grad_large_threshold`, `grad_zero_tol`, `param_ratio_bottleneck`, `activation_bottleneck_mb`, and init/std heuristics (`init_std_warn_multiply`, `init_std_warn_min_mult`).
 
-### 🛠️ Utility Functions (NEW!)
+### 🛠️ Utility Functions
 Framework-agnostic "missing" functions that save time and improve code quality:
 
 #### Auto-Shape Flattener
@@ -45,7 +52,7 @@ Framework-agnostic "missing" functions that save time and improve code quality:
 - **`LRFinder`** - Full-featured LR range test class with plotting
 - **Use case**: Automatically discover the best learning rate before training (fast.ai style), avoid manual tuning
 
-### 📊 ModelView (NEW! - PyTorch & TensorFlow)
+### 📊 ModelView (PyTorch & TensorFlow)
 Publication-quality neural network architecture diagrams for both frameworks:
 - **PyTorch support** - Wraps torchview for comprehensive PyTorch model visualization
 - **TensorFlow support** - Native implementation for Keras models
@@ -187,7 +194,7 @@ best_lr = find_lr(model, optimizer, criterion, train_loader)
 print(f"Use learning rate: {best_lr}")
 ```
 
-#### ModelView (PyTorch) - NEW!
+#### ModelView (PyTorch)
 
 ```python
 from ToTf.pytorch import ModelView, draw_graph
@@ -250,7 +257,7 @@ summary = SmartSummary(model, input_shape=(224, 224, 3), track_gradients=True)
 summary.show()
 ```
 
-#### ModelView (TensorFlow) - NEW!
+#### ModelView (TensorFlow)
 
 ```python
 from ToTf.tenf import ModelView, draw_graph
