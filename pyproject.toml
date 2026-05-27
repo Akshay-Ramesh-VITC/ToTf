@@ -11,8 +11,7 @@ requires-python = ">=3.8"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Akshay"},
-    {name = "Shyamanth Reddy"},
-    {name = "Vijay Aravind"}
+    {name = "Shyamanth Reddy"}
 ]
 keywords = [
     "pytorch",
