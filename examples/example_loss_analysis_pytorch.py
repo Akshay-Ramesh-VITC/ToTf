@@ -7,7 +7,13 @@ training dynamics and identifying issues like overfitting, divergence, or platea
 
 import torch
 import torch.nn as nn
-from pytorch.smartsummary import SmartSummary
+import sys
+import os
+
+# Add repository root to path for imports (run from examples/ directory)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from ToTf import SmartSummary
 
 
 # Define a simple model

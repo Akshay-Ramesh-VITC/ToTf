@@ -18,8 +18,8 @@ from tensorflow import keras
 from tensorflow.keras import layers
 import os
 
-# Import ModelView
-from ToTf.tenf import ModelView, draw_graph
+# Import ModelView via the unified dispatcher
+from ToTf import ModelView, draw_graph
 
 
 def example1_simple_sequential():

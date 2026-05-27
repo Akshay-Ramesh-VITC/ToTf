@@ -15,14 +15,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from pytorch.utils import (
-    lazy_flatten,
-    get_flatten_size,
-    loss_ncc,
-    ncc_score,
-    find_lr,
-    LRFinder
-)
+from ToTf import get_component
+
+# Load backend-specific utilities via dynamic dispatcher
+_utils = get_component('utils', backend_name='torch')
+lazy_flatten = _utils.lazy_flatten
+get_flatten_size = _utils.get_flatten_size
+loss_ncc = _utils.loss_ncc
+ncc_score = _utils.ncc_score
+find_lr = _utils.find_lr
+LRFinder = _utils.LRFinder
 
 
 def example_1_lazy_flatten():

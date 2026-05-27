@@ -18,8 +18,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import os
 
-# Import ModelView
-from ToTf.pytorch import ModelView, draw_graph
+# Import ModelView via the unified dispatcher
+from ToTf import ModelView, draw_graph
 
 
 def example1_simple_sequential():

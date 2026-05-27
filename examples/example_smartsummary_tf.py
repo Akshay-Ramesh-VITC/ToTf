@@ -9,10 +9,10 @@ from tensorflow import keras
 import sys
 import os
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Add repository root to path for imports (run from examples/ directory)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from tenf import SmartSummary
+from ToTf import SmartSummary
 
 
 def example_1_simple_cnn():

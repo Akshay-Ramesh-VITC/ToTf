@@ -13,15 +13,17 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import tensorflow as tf
 from tensorflow import keras
-from tenf.utils import (
-    lazy_flatten,
-    get_flatten_size,
-    loss_ncc,
-    ncc_score,
-    NCCLoss,
-    find_lr,
-    LRFinder
-)
+from ToTf import get_component
+
+# Load backend-specific utilities via dynamic dispatcher (tensorflow)
+_utils = get_component('utils', backend_name='tensorflow')
+lazy_flatten = _utils.lazy_flatten
+get_flatten_size = _utils.get_flatten_size
+loss_ncc = _utils.loss_ncc
+ncc_score = _utils.ncc_score
+NCCLoss = _utils.NCCLoss
+find_lr = _utils.find_lr
+LRFinder = _utils.LRFinder
 import numpy as np
 
 

@@ -12,7 +12,8 @@ import torch.nn.functional as F
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add repository root to path for imports (run from examples/ directory)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from ToTf import SmartSummary
 

@@ -5,7 +5,7 @@ Demo script to visualize complex architectures with multiple branches and cross-
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
-from tenf import ModelView
+from ToTf import ModelView
 
 def create_parallel_branches_demo():
     """Create and visualize a model with parallel branches"""

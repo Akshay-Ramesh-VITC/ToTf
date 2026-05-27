@@ -132,6 +132,24 @@ def ModelView(*args, **kwargs):
     return MV(*args, **kwargs)
 
 
+def draw_graph(*args, **kwargs):
+    """Dispatch to the backend-specific convenience draw_graph function.
+
+    This will load the backend's `modelview` component and call its
+    `draw_graph` function. Selection of backend follows the same rules as
+    other factories (inspect args for model/tensor types, then fallback to
+    detected default).
+    """
+    backend_name = _select_backend_for_args(*args, **kwargs)
+    impl_mod = _load_backend_impl(backend_name, "modelview")
+    if impl_mod is None:
+        raise ImportError(f"draw_graph backend '{backend_name}' not available")
+    dg = getattr(impl_mod, "draw_graph", None)
+    if dg is None:
+        raise ImportError(f"draw_graph function not found in backend module {impl_mod}")
+    return dg(*args, **kwargs)
+
+
 # Allow users to register custom backend modules (advanced)
 _CUSTOM: Dict[str, Dict[str, Any]] = {}
 

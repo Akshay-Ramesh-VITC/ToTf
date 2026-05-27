@@ -13,7 +13,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 import numpy as np
-from tenf.modelview import ModelView, draw_graph
+from ToTf import ModelView, draw_graph
 
 
 def create_simple_model():

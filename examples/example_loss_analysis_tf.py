@@ -7,7 +7,13 @@ training dynamics and identifying issues like overfitting, divergence, or platea
 
 import tensorflow as tf
 from tensorflow import keras
-from tenf.smartsummary import SmartSummary
+import sys
+import os
+
+# Add repository root to path for imports (run from examples/ directory)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from ToTf import SmartSummary
 
 
 def create_simple_model():
