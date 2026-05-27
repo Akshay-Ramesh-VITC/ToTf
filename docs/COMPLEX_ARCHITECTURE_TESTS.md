@@ -219,6 +219,10 @@ Validates ModelView's ability to visualize and analyze complex neural network ar
    - Handles dimension changes at merge points
    - Validates output shapes for multi-output models
 
+4. **Receptive Field & Activation Tracking**
+   - SmartSummary now propagates per-layer receptive-field (`rf`), effective stride (`jump`) and `start` offsets through branching topologies. If a merge/elementwise operation receives inputs with incompatible receptive-field metadata the implementation records a conservative merged RF and emits a warning to help identify potential analysis mismatches.
+   - Optional activation capture (`keep_activations=True`) allows tests and users to compute precise activation memory by using the real tensor sizes captured during a forward pass. A strong-ref mode with a `max_saved_activation_bytes` cutoff is available in PyTorch to retain tensors for deeper offline inspection while avoiding OOM.
+
 4. **Rendering Quality**
    - Generates readable diagrams for complex architectures
    - Scales to 10-15+ layer models

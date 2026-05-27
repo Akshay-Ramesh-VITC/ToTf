@@ -17,15 +17,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import tensorflow as tf
 from tensorflow import keras
-from tenf.utils import (
-    lazy_flatten,
-    get_flatten_size,
-    loss_ncc,
-    ncc_score,
-    NCCLoss,
-    LRFinder,
-    find_lr
-)
+from ToTf.backend_manager import get_component
+_utils = get_component('utils', 'tensorflow')
+lazy_flatten = _utils.lazy_flatten
+get_flatten_size = _utils.get_flatten_size
+loss_ncc = _utils.loss_ncc
+ncc_score = _utils.ncc_score
+NCCLoss = _utils.NCCLoss
+LRFinder = _utils.LRFinder
+find_lr = _utils.find_lr
 import numpy as np
 
 

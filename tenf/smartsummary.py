@@ -39,7 +39,14 @@ class SmartSummary:
         model: keras.Model, 
         input_shape: Optional[Union[Tuple[int, ...], List[Tuple[int, ...]]]] = None,
         batch_size: int = 1,
-        track_gradients: bool = False
+        track_gradients: bool = False,
+        # thresholds/config
+        grad_large_threshold: float = 1e3,
+        init_std_warn_multiply: float = 10.0,
+        init_std_warn_min_mult: float = 0.01,
+        param_ratio_bottleneck: float = 0.1,
+        activation_bottleneck_mb: float = 10.0,
+        keep_activations: bool = False
     ):
         """
         Initialize SmartSummary.
@@ -62,6 +69,21 @@ class SmartSummary:
         self.trainable_params = 0
         self.total_output_size = 0
         self.gradient_stats: Dict[str, Dict[str, float]] = {}
+        self.init_warnings: Dict[str, str] = {}
+        self.receptive_field: Dict[str, Dict[str, float]] = {}
+        self.memory_profile: Dict[str, Any] = {}
+        # thresholds
+        self.grad_large_threshold = grad_large_threshold
+        self.init_std_warn_multiply = init_std_warn_multiply
+        self.init_std_warn_min_mult = init_std_warn_min_mult
+        self.param_ratio_bottleneck = param_ratio_bottleneck
+        self.activation_bottleneck_mb = activation_bottleneck_mb
+        self.keep_activations = keep_activations
+        # runtime maps
+        self.saved_activation_refs: Dict[str, Any] = {}
+        self.init_warnings: Dict[str, str] = {}
+        self.receptive_field: Dict[str, Dict[str, float]] = {}
+        self.memory_profile: Dict[str, Any] = {}
         
         self._analyze_model()
     
@@ -93,8 +115,19 @@ class SmartSummary:
                     
                     if isinstance(output, (list, tuple)):
                         layer_outputs[layer.name] = [list(o.shape) for o in output]
+                        if self.keep_activations:
+                            # store references to the actual tensors for precise sizing
+                            try:
+                                self.saved_activation_refs[layer.name] = output
+                            except Exception:
+                                pass
                     else:
                         layer_outputs[layer.name] = list(output.shape)
+                        if self.keep_activations:
+                            try:
+                                self.saved_activation_refs[layer.name] = output
+                            except Exception:
+                                pass
             except Exception:
                 # Some layers might not be directly accessible
                 layer_outputs[layer.name] = None
@@ -159,6 +192,121 @@ class SmartSummary:
         # Track gradients if requested
         if self.track_gradients and self.input_shape is not None:
             self._track_gradients()
+
+        # Compute receptive field (simple approximation for conv/pool layers)
+        try:
+            rf = 1.0
+            jump = 1.0
+            start = 0.5
+            for key, info in self.summary_data.items():
+                layer = info.get('layer_obj')
+                if layer is None:
+                    self.receptive_field[key] = {'rf': rf, 'jump': jump, 'start': start}
+                    continue
+
+                k = 1
+                s = 1
+                p = 0
+                d = 1
+
+                # try to extract conv/pool attributes
+                try:
+                    if hasattr(layer, 'kernel_size'):
+                        k = layer.kernel_size if isinstance(layer.kernel_size, int) else layer.kernel_size[0]
+                    if hasattr(layer, 'strides'):
+                        s = layer.strides if isinstance(layer.strides, int) else layer.strides[0]
+                    if hasattr(layer, 'padding'):
+                        # Keras padding can be 'same' or 'valid'
+                        if layer.padding == 'same':
+                            p = (k - 1) // 2
+                        else:
+                            p = 0
+                except Exception:
+                    pass
+
+                k_eff = k + (k - 1) * (d - 1)
+                new_rf = rf + (k_eff - 1) * jump
+                new_jump = jump * s
+                new_start = start + ((k_eff - 1) / 2.0 - p) * jump
+
+                self.receptive_field[key] = {'rf': float(new_rf), 'jump': float(new_jump), 'start': float(new_start)}
+                rf, jump, start = new_rf, new_jump, new_start
+        except Exception:
+            pass
+
+        # Memory profiling and initialization/grad dry-run
+        try:
+            # parameter bytes
+            param_bytes = 0
+            for layer in self.model.layers:
+                for w in layer.weights:
+                    param_bytes += int(np.prod(w.shape.as_list()) * 4)
+
+            # activation bytes estimate: sum of output sizes
+            activation_bytes = 0
+            # If we saved activation tensors, use their true sizes
+            if self.keep_activations and self.saved_activation_refs:
+                try:
+                    for k, v in self.saved_activation_refs.items():
+                        try:
+                            if isinstance(v, (list, tuple)):
+                                for t in v:
+                                    count = int(tf.size(t).numpy())
+                                    dt_size = int(tf.dtypes.as_dtype(t.dtype).size)
+                                    activation_bytes += count * dt_size
+                            else:
+                                t = v
+                                count = int(tf.size(t).numpy())
+                                dt_size = int(tf.dtypes.as_dtype(t.dtype).size)
+                                activation_bytes += count * dt_size
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            else:
+                for k, info in self.summary_data.items():
+                    out = info.get('output_shape')
+                    if out and out != 'N/A':
+                        try:
+                            if isinstance(out[0], list):
+                                for shp in out:
+                                    activation_bytes += int(np.prod(shp) * 4)
+                            else:
+                                activation_bytes += int(np.prod(out) * 4)
+                        except Exception:
+                            pass
+
+            # simple dry-run for init/grad checks
+            if self.input_shape is not None:
+                if isinstance(self.input_shape, list):
+                    x = [tf.random.normal([self.batch_size] + list(shape)) for shape in self.input_shape]
+                else:
+                    x = tf.random.normal([self.batch_size] + list(self.input_shape))
+
+                with tf.GradientTape(persistent=True) as tape:
+                    out = self.model(x, training=True)
+                    loss = tf.reduce_sum(out[0]) if isinstance(out, (list, tuple)) else tf.reduce_sum(out)
+
+                for layer_name, info in self.summary_data.items():
+                    layer = info.get('layer_obj')
+                    if layer is None:
+                        continue
+                    try:
+                        weights = layer.trainable_weights
+                        if weights:
+                            grads = tape.gradient(loss, weights)
+                            if not any(g is not None and tf.reduce_max(tf.abs(g)) > 0 for g in grads if g is not None):
+                                self.init_warnings[layer_name] = 'zero gradients or no grad passed to weights'
+                    except Exception:
+                        pass
+
+            self.memory_profile = {
+                'parameter_bytes': int(param_bytes),
+                'activation_bytes_estimate': int(activation_bytes),
+                'total_estimated_bytes': int(param_bytes + activation_bytes)
+            }
+        except Exception:
+            self.memory_profile = {}
     
     def _track_gradients(self):
         """Track gradient statistics during a backward pass"""
@@ -234,7 +382,7 @@ class SmartSummary:
             # Parameter count criterion
             if self.total_params > 0:
                 param_ratio = info["params"] / self.total_params
-                if param_ratio > 0.1:  # More than 10% of total params
+                if param_ratio > self.param_ratio_bottleneck:  # configurable
                     score += param_ratio * 100
                     reasons.append(f"High params ({param_ratio*100:.1f}%)")
             
@@ -246,9 +394,9 @@ class SmartSummary:
                     reasons.append(f"High grad variance ({grad_var:.2e})")
             
             # Output size criterion
-            if info["output_size_mb"] > 10:  # More than 10MB
-                score += info["output_size_mb"]
-                reasons.append(f"Large output ({info['output_size_mb']:.1f}MB)")
+            if info.get("output_size_mb", 0) > self.activation_bottleneck_mb:  # configurable
+                score += info.get("output_size_mb", 0)
+                reasons.append(f"Large output ({info.get('output_size_mb',0):.1f}MB)")
             
             if score > 0:
                 bottlenecks.append({
@@ -322,6 +470,41 @@ class SmartSummary:
                     print(f"   Output Shape: {bn['output_shape']}")
                 
                 print("\n" + "=" * 100)
+        # Show initialization warnings
+        if self.init_warnings:
+            print(f"\n{'[!] Initialization / Gradient Warnings':^100}")
+            print("=" * 100)
+            for k, v in self.init_warnings.items():
+                print(f" - {k}: {v}")
+            print("\n" + "=" * 100)
+
+        # Receptive field
+        if self.receptive_field:
+            print(f"\n{'Receptive Field (rf/jump/start)':^100}")
+            print("=" * 100)
+            def _fmt_val(x):
+                try:
+                    if isinstance(x, (tuple, list)):
+                        return '(' + ', '.join(f"{float(t):.2f}" for t in x) + ')'
+                    else:
+                        return f"{float(x):.2f}"
+                except Exception:
+                    return str(x)
+
+            for k, v in self.receptive_field.items():
+                rf = _fmt_val(v.get('rf'))
+                jump = _fmt_val(v.get('jump'))
+                start = _fmt_val(v.get('start'))
+                print(f" - {k}: rf={rf}, jump={jump}, start={start}")
+            print("\n" + "=" * 100)
+
+        # Memory profile
+        if self.memory_profile:
+            print(f"\n{'Memory Profile (bytes)':^100}")
+            print("=" * 100)
+            for kk, vv in self.memory_profile.items():
+                print(f" - {kk}: {vv}")
+            print("\n" + "=" * 100)
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -342,7 +525,10 @@ class SmartSummary:
             "trainable_params": self.trainable_params,
             "total_output_size_mb": self.total_output_size / (1024**2),
             "gradient_stats": self.gradient_stats,
-            "bottlenecks": self.get_bottlenecks()
+            "bottlenecks": self.get_bottlenecks(),
+            "init_warnings": self.init_warnings,
+            "receptive_field": self.receptive_field,
+            "memory_profile": self.memory_profile
         }
     
     def save_to_file(self, filename: str = "model_summary.txt"):

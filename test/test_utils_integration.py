@@ -19,7 +19,8 @@ def test_lazy_flatten_consistency():
     
     try:
         import torch
-        from pytorch.utils import lazy_flatten as lazy_flatten_torch
+        from ToTf.backend_manager import get_component
+        lazy_flatten_torch = get_component('utils', 'torch').lazy_flatten
         has_torch = True
     except ImportError:
         has_torch = False
@@ -27,7 +28,8 @@ def test_lazy_flatten_consistency():
     
     try:
         import tensorflow as tf
-        from tenf.utils import lazy_flatten as lazy_flatten_tf
+        from ToTf.backend_manager import get_component as _get_component_tf
+        lazy_flatten_tf = _get_component_tf('utils', 'tensorflow').lazy_flatten
         has_tf = True
     except ImportError:
         has_tf = False
@@ -65,8 +67,9 @@ def test_get_flatten_size_consistency():
     print("="*80)
     
     try:
-        from pytorch.utils import get_flatten_size as get_size_torch
-        from tenf.utils import get_flatten_size as get_size_tf
+        from ToTf.backend_manager import get_component
+        get_size_torch = get_component('utils', 'torch').get_flatten_size
+        get_size_tf = get_component('utils', 'tensorflow').get_flatten_size
     except ImportError as e:
         print(f"⚠️  Import failed: {e}")
         return
@@ -181,7 +184,8 @@ def test_lr_finder_behavior():
     try:
         import torch
         import torch.nn as nn
-        from pytorch.utils import LRFinder as LRFinder_torch
+        from ToTf.backend_manager import get_component
+        LRFinder_torch = get_component('utils', 'torch').LRFinder
         has_torch = True
     except ImportError:
         has_torch = False
@@ -189,7 +193,8 @@ def test_lr_finder_behavior():
     try:
         import tensorflow as tf
         from tensorflow import keras
-        from tenf.utils import LRFinder as LRFinder_tf
+        from ToTf.backend_manager import get_component
+        LRFinder_tf = get_component('utils', 'tensorflow').LRFinder
         has_tf = True
     except ImportError:
         has_tf = False

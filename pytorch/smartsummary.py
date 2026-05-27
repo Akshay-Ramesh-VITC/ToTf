@@ -40,7 +40,15 @@ class SmartSummary:
         input_size: Optional[Tuple[int, ...]] = None,
         batch_size: int = 1,
         device: str = "cpu",
-        track_gradients: bool = False
+        track_gradients: bool = False,
+        # thresholds/config
+        grad_large_threshold: float = 1e3,
+        grad_zero_tol: float = 0.0,
+        init_std_warn_multiply: float = 10.0,
+        init_std_warn_min_mult: float = 0.01,
+        param_ratio_bottleneck: float = 0.1,
+        activation_bottleneck_mb: float = 10.0,
+        keep_activations: bool = False
     ):
         """
         Initialize SmartSummary.
@@ -64,6 +72,24 @@ class SmartSummary:
         self.trainable_params = 0
         self.total_output_size = 0
         self.gradient_stats: Dict[str, Dict[str, float]] = {}
+        self.init_warnings: Dict[str, str] = {}
+        self.receptive_field: Dict[str, Dict[str, float]] = {}
+        self.memory_profile: Dict[str, Any] = {}
+        # thresholds
+        self.grad_large_threshold = grad_large_threshold
+        self.grad_zero_tol = grad_zero_tol
+        self.init_std_warn_multiply = init_std_warn_multiply
+        self.init_std_warn_min_mult = init_std_warn_min_mult
+        self.param_ratio_bottleneck = param_ratio_bottleneck
+        self.activation_bottleneck_mb = activation_bottleneck_mb
+        self.keep_activations = keep_activations
+        # option to keep strong refs (may increase memory) and limit
+        self.keep_activations_strong: bool = False
+        self.max_saved_activation_bytes: Optional[int] = None
+
+        # runtime maps
+        self.tensor_rf_map: Dict[int, Dict[str, Any]] = {}
+        self.saved_activation_refs: Dict[str, Any] = {}
         
         self._analyze_model()
     
@@ -90,6 +116,98 @@ class SmartSummary:
                 output_size = sum(o.numel() * o.element_size() for o in output if isinstance(o, torch.Tensor))
             else:
                 output_size = output.numel() * output.element_size()
+
+            # activation bytes and optional weakref saving
+            try:
+                act_bytes = int(output_size)
+            except Exception:
+                act_bytes = 0
+
+            if self.keep_activations:
+                # store activation references. By default, store weakrefs to avoid OOM.
+                try:
+                    if getattr(self, 'keep_activations_strong', False):
+                        # strong refs with optional size cutoff
+                        saved = []
+                        total_saved = sum((t.numel() * t.element_size()) for t in self.saved_activation_refs.values() if isinstance(t, torch.Tensor)) if self.saved_activation_refs else 0
+                        if isinstance(output, (list, tuple)):
+                            for o in output:
+                                if not isinstance(o, torch.Tensor):
+                                    continue
+                                o_bytes = int(o.numel() * o.element_size())
+                                if self.max_saved_activation_bytes is not None and (total_saved + o_bytes) > self.max_saved_activation_bytes:
+                                    # skip storing further tensors
+                                    continue
+                                saved.append(o)
+                                total_saved += o_bytes
+                        else:
+                            o = output
+                            o_bytes = int(o.numel() * o.element_size())
+                            if self.max_saved_activation_bytes is None or (total_saved + o_bytes) <= self.max_saved_activation_bytes:
+                                saved = o
+                        self.saved_activation_refs[m_key] = saved
+                    else:
+                        import weakref
+                        if isinstance(output, (list, tuple)):
+                            self.saved_activation_refs[m_key] = [weakref.ref(o) for o in output if isinstance(o, torch.Tensor)]
+                        else:
+                            self.saved_activation_refs[m_key] = weakref.ref(output)
+                except Exception:
+                    self.saved_activation_refs[m_key] = None
+
+            # Receptive field bookkeeping: compute per-spatial-dim (h,w)
+            # Attempt to derive input receptive field from input tensors
+            in_rfs = []
+            if isinstance(input, tuple):
+                for inp in input:
+                    if isinstance(inp, torch.Tensor):
+                        rf_info = self.tensor_rf_map.get(id(inp))
+                        if rf_info is not None:
+                            in_rfs.append(rf_info)
+            elif isinstance(input, torch.Tensor):
+                rf_info = self.tensor_rf_map.get(id(input))
+                if rf_info is not None:
+                    in_rfs.append(rf_info)
+
+            # default input rf if none
+            if not in_rfs:
+                # spatial receptive field (h,w), jump (h,w), start (h,w)
+                in_rf = {'rf': (1.0, 1.0), 'jump': (1.0, 1.0), 'start': (0.5, 0.5)}
+            else:
+                # for multiple inputs (branches), take the maximal rf/jump alignment
+                # We'll take the max rf and max jump, and average starts
+                rfs = [r['rf'] for r in in_rfs]
+                jumps = [r['jump'] for r in in_rfs]
+                starts = [r['start'] for r in in_rfs]
+
+                # If all jumps and starts align within small tolerance, prefer that
+                def all_close(vals, tol=1e-6):
+                    first = vals[0]
+                    return all(abs(v - first) < tol for v in vals)
+
+                jumps_h = [t[0] for t in jumps]
+                jumps_w = [t[1] for t in jumps]
+                starts_h = [t[0] for t in starts]
+                starts_w = [t[1] for t in starts]
+
+                if all_close(jumps_h) and all_close(jumps_w) and all_close(starts_h) and all_close(starts_w):
+                    # take max RF but keep common jump/start
+                    in_rf = {
+                        'rf': (max([t[0] for t in rfs]), max([t[1] for t in rfs])),
+                        'jump': (jumps_h[0], jumps_w[0]),
+                        'start': (starts_h[0], starts_w[0])
+                    }
+                else:
+                    # mismatched receptive fields across branches — fall back to conservative merge and warn
+                    in_rf = {
+                        'rf': (max([t[0] for t in rfs]), max([t[1] for t in rfs])),
+                        'jump': (max([t[0] for t in jumps]), max([t[1] for t in jumps])),
+                        'start': (sum([t[0] for t in starts]) / len(starts), sum([t[1] for t in starts]) / len(starts))
+                    }
+                    try:
+                        self.init_warnings[m_key] = 'mismatched receptive field across input branches'
+                    except Exception:
+                        pass
             
             self.summary_data[m_key] = {
                 "layer_name": class_name,
@@ -98,12 +216,103 @@ class SmartSummary:
                 "params": params,
                 "trainable": trainable,
                 "output_size_mb": output_size / (1024 ** 2),
+                "activation_bytes": act_bytes,
                 "module": module
             }
             
             self.total_params += params
             self.trainable_params += trainable
             self.total_output_size += output_size
+
+            # compute receptive field for this layer if conv/pool
+            try:
+                # handle 2D conv/pool
+                if isinstance(module, nn.Conv2d):
+                    k = module.kernel_size
+                    s = module.stride
+                    p = module.padding
+                    d = module.dilation
+
+                    # support tuple or int
+                    kh, kw = (k if isinstance(k, tuple) else (k, k))
+                    sh, sw = (s if isinstance(s, tuple) else (s, s))
+                    ph, pw = (p if isinstance(p, tuple) else (p, p))
+                    dh, dw = (d if isinstance(d, tuple) else (d, d))
+
+                    in_rf_h, in_rf_w = in_rf['rf']
+                    in_jump_h, in_jump_w = in_rf['jump']
+                    in_start_h, in_start_w = in_rf['start']
+
+                    k_eff_h = kh + (kh - 1) * (dh - 1)
+                    k_eff_w = kw + (kw - 1) * (dw - 1)
+
+                    out_rf_h = in_rf_h + (k_eff_h - 1) * in_jump_h
+                    out_rf_w = in_rf_w + (k_eff_w - 1) * in_jump_w
+
+                    out_jump_h = in_jump_h * sh
+                    out_jump_w = in_jump_w * sw
+
+                    out_start_h = in_start_h + ((k_eff_h - 1) / 2.0 - ph) * in_jump_h
+                    out_start_w = in_start_w + ((k_eff_w - 1) / 2.0 - pw) * in_jump_w
+
+                    self.receptive_field[m_key] = {
+                        'rf': (float(out_rf_h), float(out_rf_w)),
+                        'jump': (float(out_jump_h), float(out_jump_w)),
+                        'start': (float(out_start_h), float(out_start_w))
+                    }
+
+                    # map output tensor id(s) to rf info
+                    if isinstance(output, torch.Tensor):
+                        self.tensor_rf_map[id(output)] = self.receptive_field[m_key]
+                    else:
+                        # list/tuple outputs
+                        try:
+                            for o in output:
+                                if isinstance(o, torch.Tensor):
+                                    self.tensor_rf_map[id(o)] = self.receptive_field[m_key]
+                        except Exception:
+                            pass
+
+                elif isinstance(module, (nn.MaxPool2d, nn.AvgPool2d)):
+                    k = module.kernel_size
+                    s = module.stride if module.stride is not None else module.kernel_size
+                    p = module.padding if hasattr(module, 'padding') else 0
+
+                    kh, kw = (k if isinstance(k, tuple) else (k, k))
+                    sh, sw = (s if isinstance(s, tuple) else (s, s))
+                    ph, pw = (p if isinstance(p, tuple) else (p, p))
+
+                    in_rf_h, in_rf_w = in_rf['rf']
+                    in_jump_h, in_jump_w = in_rf['jump']
+                    in_start_h, in_start_w = in_rf['start']
+
+                    k_eff_h = kh
+                    k_eff_w = kw
+
+                    out_rf_h = in_rf_h + (k_eff_h - 1) * in_jump_h
+                    out_rf_w = in_rf_w + (k_eff_w - 1) * in_jump_w
+
+                    out_jump_h = in_jump_h * sh
+                    out_jump_w = in_jump_w * sw
+
+                    out_start_h = in_start_h + ((k_eff_h - 1) / 2.0 - ph) * in_jump_h
+                    out_start_w = in_start_w + ((k_eff_w - 1) / 2.0 - pw) * in_jump_w
+
+                    self.receptive_field[m_key] = {
+                        'rf': (float(out_rf_h), float(out_rf_w)),
+                        'jump': (float(out_jump_h), float(out_jump_w)),
+                        'start': (float(out_start_h), float(out_start_w))
+                    }
+
+                    if isinstance(output, torch.Tensor):
+                        self.tensor_rf_map[id(output)] = self.receptive_field[m_key]
+            except Exception:
+                # fallback: map outputs to input rf
+                try:
+                    if isinstance(output, torch.Tensor):
+                        self.tensor_rf_map[id(output)] = in_rf
+                except Exception:
+                    pass
         
         hooks = []
         for name, layer in self.model.named_modules():
@@ -113,6 +322,153 @@ class SmartSummary:
             hooks.append(layer.register_forward_hook(hook_fn))
         
         return hooks
+
+    def _compute_receptive_field(self):
+        """
+        Compute receptive field, effective stride (jump), and start offset for conv/pool layers.
+
+        Uses standard receptive field bookkeeping:
+          k_eff = k + (k-1)*(d-1)
+          new_rf = rf + (k_eff - 1) * jump
+          new_jump = jump * stride
+          new_start = start + ((k_eff - 1)/2 - padding) * jump
+        """
+        rf = 1.0
+        jump = 1.0
+        start = 0.5
+
+        for key, info in self.summary_data.items():
+            mod = info.get("module")
+            if mod is None:
+                self.receptive_field[key] = {"rf": rf, "jump": jump, "start": start}
+                continue
+
+            # default values
+            k = 1
+            s = 1
+            p = 0
+            d = 1
+
+            if isinstance(mod, nn.Conv2d):
+                k = mod.kernel_size[0] if isinstance(mod.kernel_size, tuple) else mod.kernel_size
+                s = mod.stride[0] if isinstance(mod.stride, tuple) else mod.stride
+                p = mod.padding[0] if isinstance(mod.padding, tuple) else mod.padding
+                d = mod.dilation[0] if isinstance(mod.dilation, tuple) else mod.dilation
+            elif isinstance(mod, (nn.MaxPool2d, nn.AvgPool2d)):
+                k = mod.kernel_size if isinstance(mod.kernel_size, int) else (mod.kernel_size[0] if isinstance(mod.kernel_size, tuple) else 1)
+                s = mod.stride if mod.stride is not None else k
+                s = s if isinstance(s, int) else s[0]
+                p = mod.padding if hasattr(mod, 'padding') else 0
+                p = p if isinstance(p, int) else p[0]
+
+            k_eff = k + (k - 1) * (d - 1)
+            new_rf = rf + (k_eff - 1) * jump
+            new_jump = jump * s
+            new_start = start + ((k_eff - 1) / 2.0 - p) * jump
+
+            # store values for this layer
+            self.receptive_field[key] = {"rf": float(new_rf), "jump": float(new_jump), "start": float(new_start)}
+
+            # update running
+            rf, jump, start = new_rf, new_jump, new_start
+
+    def _dryrun_initialization_and_gradients(self, warn_zero_grad: bool = True, warn_large_grad: bool = True):
+        """
+        Perform a dry-run forward+backward to inspect initial gradients and weight scales.
+
+        Flags layers with zero gradients, extremely large gradients, or suspicious init scaling
+        (compared to Xavier/He heuristics).
+        """
+        # Only run if we have input size
+        if self.input_size is None:
+            return
+
+        # Create small random input
+        x = torch.randn(self.batch_size, *self.input_size).to(self.device)
+        self.model.to(self.device)
+
+        # Ensure train mode so autograd keeps activations
+        self.model.train()
+
+        # Zero grads
+        self.model.zero_grad(set_to_none=True)
+
+        # Forward
+        output = self.model(x)
+        loss = output.sum() if not isinstance(output, (list, tuple)) else output[0].sum()
+
+        # Backward
+        loss.backward()
+
+        # Analyze per-layer gradients and initial weight scales
+        for key, info in self.summary_data.items():
+            module = info.get('module')
+            if module is None:
+                continue
+
+            msg_parts = []
+            # check parameter gradients
+            grads_found = False
+            large_grad = False
+            zero_grad = True
+            for p in module.parameters():
+                if p.grad is None:
+                    continue
+                grads_found = True
+                g = p.grad.detach()
+                g_abs_max = float(g.abs().max().item()) if g.numel() > 0 else 0.0
+                g_mean = float(g.mean().item()) if g.numel() > 0 else 0.0
+                if g_abs_max > self.grad_large_threshold and warn_large_grad:
+                    large_grad = True
+                if g_abs_max > self.grad_zero_tol:
+                    zero_grad = False
+
+            if not grads_found:
+                msg_parts.append('no parameter gradients')
+            else:
+                if zero_grad and warn_zero_grad:
+                    msg_parts.append('zero gradients')
+                if large_grad:
+                    msg_parts.append('very large gradients')
+
+            # initialization scale check (heuristic)
+            try:
+                for p in module.parameters():
+                    w = p.detach()
+                    if w.numel() == 0:
+                        continue
+                    std = float(w.std().item())
+                    # compute fan_in, fan_out for Linear/Conv
+                    fan_in = None
+                    fan_out = None
+                    if isinstance(module, (nn.Conv2d,)):
+                        k = module.kernel_size[0] if isinstance(module.kernel_size, tuple) else module.kernel_size
+                        cin = module.in_channels
+                        cout = module.out_channels
+                        fan_in = cin * k * k
+                        fan_out = cout * k * k
+                    elif isinstance(module, (nn.Linear,)):
+                        fan_in = w.size(1) if w.dim() >= 2 else w.numel()
+                        fan_out = w.size(0) if w.dim() >= 2 else w.numel()
+
+                    if fan_in is not None and fan_out is not None:
+                        # Xavier std and He std
+                        xavier_std = (2.0 / (fan_in + fan_out)) ** 0.5
+                        he_std = (2.0 / fan_in) ** 0.5
+                        # if std is orders of magnitude off, warn
+                        if std > max(xavier_std, he_std) * self.init_std_warn_multiply:
+                            msg_parts.append(f'large init std ({std:.3e})')
+                        elif std < min(xavier_std, he_std) * self.init_std_warn_min_mult:
+                            msg_parts.append(f'small init std ({std:.3e})')
+                    break
+            except Exception:
+                pass
+
+            if msg_parts:
+                self.init_warnings[key] = '; '.join(msg_parts)
+
+        # clear gradients to avoid side effects
+        self.model.zero_grad(set_to_none=True)
     
     def _register_gradient_hooks(self):
         """Register hooks to track gradient statistics"""
@@ -181,6 +537,36 @@ class SmartSummary:
         # Remove hooks
         for h in hooks:
             h.remove()
+        # Compute receptive field metadata
+        try:
+            # already computed during forward hooks; ensure mapping exists
+            # fallback to separate computation if needed
+            if not self.receptive_field:
+                self._compute_receptive_field()
+        except Exception:
+            pass
+
+        # Memory profile estimation (approximate)
+        try:
+            param_bytes = sum(p.numel() * p.element_size() for p in self.model.parameters())
+            activation_bytes = 0
+            for k, info in self.summary_data.items():
+                activation_bytes += int(info.get('activation_bytes', 0))
+
+            grad_bytes = 0
+            for p in self.model.parameters():
+                if p.grad is not None:
+                    grad_bytes += p.grad.numel() * p.grad.element_size()
+
+            self.memory_profile = {
+                'parameter_bytes': int(param_bytes),
+                'activation_bytes_estimate': int(activation_bytes),
+                'gradient_bytes': int(grad_bytes),
+                'total_estimated_bytes': int(param_bytes + activation_bytes + grad_bytes),
+                'saved_activations': len(self.saved_activation_refs) if hasattr(self, 'saved_activation_refs') else 0
+            }
+        except Exception:
+            self.memory_profile = {}
     
     def _analyze_without_forward(self):
         """Analyze model structure without forward pass"""
@@ -229,7 +615,7 @@ class SmartSummary:
             # Parameter count criterion
             if self.total_params > 0:
                 param_ratio = info["params"] / self.total_params
-                if param_ratio > 0.1:  # More than 10% of total params
+                if param_ratio > self.param_ratio_bottleneck:  # configurable
                     score += param_ratio * 100
                     reasons.append(f"High params ({param_ratio*100:.1f}%)")
             
@@ -241,9 +627,9 @@ class SmartSummary:
                     reasons.append(f"High grad variance ({grad_var:.2e})")
             
             # Output size criterion
-            if info["output_size_mb"] > 10:  # More than 10MB
-                score += info["output_size_mb"]
-                reasons.append(f"Large output ({info['output_size_mb']:.1f}MB)")
+            if info.get("output_size_mb", 0) > self.activation_bottleneck_mb:  # configurable
+                score += info.get("output_size_mb", 0)
+                reasons.append(f"Large output ({info.get('output_size_mb',0):.1f}MB)")
             
             if score > 0:
                 bottlenecks.append({
@@ -314,6 +700,41 @@ class SmartSummary:
                     print(f"   Output Shape: {bn['output_shape']}")
                 
                 print("\n" + "=" * 100)
+        # Show initialization warnings (dry-run)
+        if self.init_warnings:
+            print(f"\n{'[!] Initialization / Gradient Warnings':^100}")
+            print("=" * 100)
+            for k, v in self.init_warnings.items():
+                print(f" - {k}: {v}")
+            print("\n" + "=" * 100)
+
+        # Show receptive field summary
+        if self.receptive_field:
+            print(f"\n{'Receptive Field (rf/jump/start)':^100}")
+            print("=" * 100)
+            def _fmt_val(x):
+                try:
+                    if isinstance(x, (tuple, list)):
+                        return '(' + ', '.join(f"{float(t):.2f}" for t in x) + ')'
+                    else:
+                        return f"{float(x):.2f}"
+                except Exception:
+                    return str(x)
+
+            for k, v in self.receptive_field.items():
+                rf = _fmt_val(v.get('rf'))
+                jump = _fmt_val(v.get('jump'))
+                start = _fmt_val(v.get('start'))
+                print(f" - {k}: rf={rf}, jump={jump}, start={start}")
+            print("\n" + "=" * 100)
+
+        # Memory profile
+        if self.memory_profile:
+            print(f"\n{'Memory Profile (bytes)':^100}")
+            print("=" * 100)
+            for kk, vv in self.memory_profile.items():
+                print(f" - {kk}: {vv}")
+            print("\n" + "=" * 100)
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -328,7 +749,10 @@ class SmartSummary:
             "trainable_params": self.trainable_params,
             "total_output_size_mb": self.total_output_size / (1024**2),
             "gradient_stats": self.gradient_stats,
-            "bottlenecks": self.get_bottlenecks()
+            "bottlenecks": self.get_bottlenecks(),
+            "init_warnings": self.init_warnings,
+            "receptive_field": self.receptive_field,
+            "memory_profile": self.memory_profile
         }
     
     def save_to_file(self, filename: str = "model_summary.txt"):

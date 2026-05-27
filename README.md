@@ -21,6 +21,10 @@ Advanced model analysis with intelligent insights (UNIQUE features vs torchsumma
 - **Export capabilities** - save to files or export as dictionaries
 - **Complex architectures** - works with nested models, residual connections, etc.
 - **Cross-framework support** - Available for both PyTorch and TensorFlow/Keras
+- **Dry-run init & gradient checks** - runs a lightweight forward/backward pass to flag zero or abnormally large initial gradients and suspicious initialization scales (Xavier/He heuristics)
+- **Receptive Field bookkeeping** - per-layer RF/jump/start propagation supporting dilations and asymmetric kernels across branches; emits warnings when inputs to merges have mismatched RF metadata
+- **Precise activation memory profiling** - optional `keep_activations=True` stores captured output tensors and uses actual tensor sizes for a more accurate memory profile. PyTorch also supports `keep_activations_strong=True` with `max_saved_activation_bytes` to retain tensors for deeper analysis while avoiding OOM.
+- **Configurable thresholds** - constructor options control sensitivity: `grad_large_threshold`, `grad_zero_tol`, `param_ratio_bottleneck`, `activation_bottleneck_mb`, and init/std heuristics (`init_std_warn_multiply`, `init_std_warn_min_mult`).
 
 ### 🛠️ Utility Functions (NEW!)
 Framework-agnostic "missing" functions that save time and improve code quality:
@@ -152,6 +156,9 @@ for bn in bottlenecks:
 
 # Track gradients for debugging
 summary = SmartSummary(model, input_size=(3, 224, 224), track_gradients=True)
+    - `keep_activations_strong` (opt-in): retain strong references to activations; use with `max_saved_activation_bytes` to limit memory
+    - `grad_large_threshold`, `grad_zero_tol`: control gradient anomaly detection
+    - `param_ratio_bottleneck`, `activation_bottleneck_mb`: control bottleneck detection thresholds
 summary.show()
 ```
 
@@ -238,6 +245,8 @@ for bn in bottlenecks:
 
 # Track gradients for debugging
 summary = SmartSummary(model, input_shape=(224, 224, 3), track_gradients=True)
+    - `param_ratio_bottleneck`, `activation_bottleneck_mb`: control bottleneck detection thresholds
+    - `grad_large_threshold`, `init_std_warn_multiply`, `init_std_warn_min_mult`: control dry-run init/gradient heuristics
 summary.show()
 ```
 

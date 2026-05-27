@@ -4,17 +4,10 @@ Provides additional features for ease of use not directly available in Torch or 
 """
 
 from .backend import get_backend, _BACKEND
+from .backend_manager import SmartSummary, TrainingMonitor
 
-__version__ = "0.1.0"
-__author__ = "Your Name"
+__version__ = "0.1.2"
+__author__ = "Akshay"
 __all__ = ["get_backend", "TrainingMonitor", "SmartSummary"]
 
-# Import framework-specific modules based on detected backend
-if _BACKEND == "torch":
-    from .pytorch.trainingmonitor import TrainingMonitor
-    from .pytorch.smartsummary import SmartSummary
-elif _BACKEND == "tensorflow":
-    from .tenf.smartsummary import SmartSummary
-    # TrainingMonitor for TensorFlow to be implemented
-else:
-    raise ImportError("No compatible backend found. Install PyTorch or TensorFlow.")
+# Use backend_manager factories for dynamic dispatch to framework implementations

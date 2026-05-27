@@ -17,14 +17,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch.utils import (
-    lazy_flatten, 
-    get_flatten_size, 
-    loss_ncc, 
-    ncc_score,
-    LRFinder,
-    find_lr
-)
+from ToTf.backend_manager import get_component
+_utils = get_component('utils', 'torch')
+lazy_flatten = _utils.lazy_flatten
+get_flatten_size = _utils.get_flatten_size
+loss_ncc = _utils.loss_ncc
+ncc_score = _utils.ncc_score
+find_lr = _utils.find_lr
+LRFinder = _utils.LRFinder
+import numpy as np
 import numpy as np
 
 

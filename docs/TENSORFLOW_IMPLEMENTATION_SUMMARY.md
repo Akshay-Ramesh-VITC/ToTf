@@ -60,6 +60,12 @@ Successfully implemented the TensorFlow/Keras version of SmartSummary in `/tenf`
 ✅ Export to dictionary  
 ✅ Save to file  
 
+### Recent Enhancements (2026 updates)
+- ✅ **Dry-run initialization & gradient checks** — runs a lightweight forward/backward pass to detect layers with zero or abnormally large initial gradients and flags suspicious initialization scaling compared to Xavier/He heuristics. Configurable thresholds: `grad_large_threshold`, `grad_zero_tol`, `init_std_warn_multiply`, `init_std_warn_min_mult`.
+- ✅ **Receptive Field (RF) bookkeeping improvements** — per-layer RF/jump/start bookkeeping now handles dilations and asymmetric kernels, and propagates RF metadata through branches. When inputs to a merge have mismatched RF/jump/start the summary records a conservative merged estimate and emits a warning for further inspection.
+- ✅ **Precise activation memory capture** — optional `keep_activations=True` stores layer output tensors captured during a forward pass; when available the memory profile uses actual tensor sizes (bytes) instead of heuristics. An optional strong-ref mode can be enabled (see PyTorch `keep_activations_strong` / `max_saved_activation_bytes`) to retain tensors for deeper inspection while guarding against OOM.
+- ✅ **Configurable bottleneck thresholds** — `param_ratio_bottleneck` and `activation_bottleneck_mb` control when layers are flagged as bottlenecks in `get_bottlenecks()`.
+
 ### TensorFlow-Specific Features
 ✅ Multi-input model support with list of shapes  
 ✅ Keras layer compatibility  
