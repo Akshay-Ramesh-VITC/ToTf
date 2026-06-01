@@ -1361,9 +1361,4 @@ pytest test/test_utils_tf.py -v          # Utilities tests
 - TrainingMonitor with progress tracking
 - Utility functions (NCC loss, LR finder, auto-flatten)
 
----
 
-**Version:** 0.2.2  
-**Status:** Production Ready ✓  
-**Test Coverage:** 95%+ (41 tests)  
-**Frameworks:** PyTorch 2.0+, TensorFlow 2.13+
