@@ -1336,7 +1336,7 @@ pytest test/test_utils_tf.py -v          # Utilities tests
 
 ## What's New
 
-**v0.2.2 - Connection Extraction Fix** 🔧
+**v0.2.2 Connection Extraction Fix** 🔧
 - ✅ **Fixed connection extraction** - Edges now properly displayed in complex architectures
 - ✅ **Improved graph visualization** - Parallel branches, cross-connections, and merge points now visible
 - ✅ **Keras API compatibility** - Updated to work with latest TensorFlow/Keras node structure
