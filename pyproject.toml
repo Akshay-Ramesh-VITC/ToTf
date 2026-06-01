@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ToTf"
-version = "0.1.2"
+version = "0.1.5"
 description = "A Cross-Library Compatible Library for PyTorch and TensorFlow that provides advanced features for ease of use"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -39,7 +39,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "tqdm>=4.65.0",
+    "tqdm>=4.60",
     "psutil>=5.9.0",
     "numpy>=1.24.0",
 ]
