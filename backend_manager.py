@@ -182,3 +182,46 @@ def get_component(component: str, backend_name: Optional[str] = None):
     if mod is None:
         raise ImportError(f"Component '{component}' not available for backend '{backend_name}'")
     return mod
+
+
+def toONNX(*args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Dispatch to backend-specific toONNX implementation.
+
+    The function will try to infer backend from the first positional argument
+    (model) if available, otherwise use `backend_name` or the default detected backend.
+    """
+    # Try to infer backend from args
+    b = None
+    if args:
+        b = _choose_backend_from_obj(args[0])
+    if b is None:
+        b = backend_name or get_default_backend()
+
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None:
+        raise ImportError(f"toONNX utils not available for backend '{b}'")
+
+    fn = getattr(impl_mod, "toONNX", None)
+    if fn is None:
+        raise ImportError(f"toONNX not implemented in backend utils for '{b}'")
+
+    return fn(*args, **kwargs)
+
+
+def fromONNX(onnx_path: str, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Dispatch to a backend-agnostic ONNX inference wrapper. This currently uses onnxruntime
+    under the hood from each backend utils module for consistency.
+    """
+    # backend_name is less important here; both backends use onnxruntime wrapper
+    b = backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None:
+        raise ImportError(f"fromONNX utils not available for backend '{b}'")
+
+    fn = getattr(impl_mod, "fromONNX", None)
+    if fn is None:
+        raise ImportError(f"fromONNX not implemented in backend utils for '{b}'")
+
+    return fn(onnx_path, *args, **kwargs)

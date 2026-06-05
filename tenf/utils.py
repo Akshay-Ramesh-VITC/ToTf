@@ -14,6 +14,85 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import copy
+import onnx
+import onnxruntime as ort
+try:
+    import tf2onnx
+except Exception:
+    tf2onnx = None
+
+
+def toONNX(model: keras.Model, filepath: str, example_input: Optional[np.ndarray] = None,
+           opset: int = 11, input_signature: Optional[list] = None) -> str:
+    """Export a Keras model to ONNX using tf2onnx.
+
+    Args:
+        model: Keras model instance (built)
+        filepath: Path to write ONNX model
+        example_input: Example numpy input to infer signature (batch dim allowed)
+        opset: ONNX opset version
+        input_signature: Optional list of `tf.TensorSpec` objects
+
+    Returns:
+        The filepath written.
+    """
+    if tf2onnx is None:
+        raise ImportError("tf2onnx is required to export Keras models to ONNX")
+
+    # Infer input signature if not provided
+    if input_signature is None:
+        if example_input is None:
+            raise ValueError("Either example_input or input_signature must be provided")
+        arr = example_input
+        if isinstance(arr, tf.Tensor):
+            arr = arr.numpy()
+        # allow variable batch dimension
+        shape = list(arr.shape)
+        shape[0] = None
+        spec = [tf.TensorSpec(shape, dtype=arr.dtype, name="input")]
+    else:
+        spec = input_signature
+
+    try:
+        model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, opset=opset)
+    except Exception:
+        # Fallback: create a concrete function and convert from function
+        fn = tf.function(model)
+        model_proto, _ = tf2onnx.convert.from_function(fn, input_signature=spec, opset=opset)
+    onnx.save_model(model_proto, filepath)
+    return filepath
+
+
+def fromONNX(onnx_path: str, inputs, providers: Optional[list] = None):
+    """Run inference with an ONNX model using ONNX Runtime.
+
+    Args:
+        onnx_path: Path to ONNX model
+        inputs: numpy array for single input or dict{name: np.array}
+        providers: Optional list of ORT providers
+
+    Returns:
+        Numpy array or list of outputs
+    """
+    # Use only available providers to avoid noisy warnings when optional providers
+    # are not installed in the environment.
+    available = ort.get_available_providers()
+    sess = ort.InferenceSession(onnx_path, providers=(providers if providers is not None else available) or None)
+    input_meta = sess.get_inputs()
+    if isinstance(inputs, dict):
+        input_map = inputs
+    else:
+        # single ndarray -> map to first input name
+        if len(input_meta) == 0:
+            raise RuntimeError("ONNX model has no inputs")
+        name = input_meta[0].name
+        # if TF model expects NHWC, ensure inputs shape matches
+        input_map = {name: inputs}
+
+    outs = sess.run(None, input_map)
+    if len(outs) == 1:
+        return outs[0]
+    return outs
 
 
 def lazy_flatten(tensor: tf.Tensor, start_dim: int = 1) -> tf.Tensor:
@@ -401,6 +480,87 @@ class LRFinder:
             Suggested learning rate or None if range_test not run
         """
         return self.best_lr
+
+
+    def toONNX(
+        model: keras.Model,
+        filepath: str,
+        example_input: Optional[Union[np.ndarray, tf.Tensor]] = None,
+        opset: int = 11,
+        input_signature: Optional[list] = None,
+    ):
+        """
+        Export a Keras model to ONNX using tf2onnx.
+
+        Args:
+            model: Keras model
+            filepath: path where to save ONNX model
+            example_input: optional example input used to build signature
+            opset: ONNX opset version
+            input_signature: optional tf.TensorSpec list
+
+        Returns:
+            filepath
+        """
+        if tf2onnx is None:
+            raise ImportError("tf2onnx is required to export TensorFlow models to ONNX")
+
+        # Build input signature from example input if provided
+        if input_signature is None and example_input is not None:
+            if isinstance(example_input, np.ndarray):
+                input_signature = [tf.TensorSpec(example_input.shape, dtype=tf.as_dtype(example_input.dtype))]
+            elif isinstance(example_input, tf.Tensor):
+                input_signature = [tf.TensorSpec(example_input.shape, dtype=example_input.dtype)]
+
+        # Use tf2onnx converter
+        try:
+            spec = None
+            if input_signature is not None:
+                spec = input_signature
+
+            model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, opset=opset)
+            onnx.save_model(model_proto, filepath)
+        except Exception as e:
+            raise
+
+        return filepath
+
+
+    def fromONNX(onnx_path: str, inputs, providers: Optional[list] = None):
+        """
+        Run inference on an ONNX model using onnxruntime (tf wrapper convenience).
+
+        Args:
+            onnx_path: path to onnx file
+            inputs: single input (tf.Tensor/ndarray) or dict mapping input names to arrays
+            providers: optional ORT providers list
+
+        Returns:
+            numpy array or list of numpy outputs
+        """
+        sess_options = ort.SessionOptions()
+        if providers is None:
+            providers = None
+
+        sess = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=providers or ort.get_all_providers())
+
+        input_map = {}
+        ort_inputs = sess.get_inputs()
+        if isinstance(inputs, dict):
+            for k, v in inputs.items():
+                if isinstance(v, tf.Tensor):
+                    v = v.numpy()
+                input_map[k] = np.asarray(v)
+        else:
+            v = inputs
+            if isinstance(v, tf.Tensor):
+                v = v.numpy()
+            input_map[ort_inputs[0].name] = np.asarray(v)
+
+        out = sess.run(None, input_map)
+        if len(out) == 1:
+            return out[0]
+        return out
 
 
 def find_lr(

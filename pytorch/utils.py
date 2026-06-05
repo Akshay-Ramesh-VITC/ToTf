@@ -15,6 +15,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import copy
+import onnx
+import onnxruntime as ort
 
 
 def lazy_flatten(tensor: torch.Tensor, start_dim: int = 1) -> torch.Tensor:
@@ -429,3 +431,103 @@ def find_lr(
         return 1e-3
     
     return best_lr
+
+
+def toONNX(
+    model: nn.Module,
+    dummy_input,
+    filepath: str,
+    input_names: Optional[list] = None,
+    output_names: Optional[list] = None,
+    opset_version: int = 11,
+    dynamic_axes: Optional[dict] = None,
+    verbose: bool = False,
+):
+    """
+    Export a PyTorch `nn.Module` to ONNX format.
+
+    Args:
+        model: PyTorch model to export
+        dummy_input: example input (torch.Tensor or tuple of tensors)
+        filepath: output path for the .onnx file
+        input_names: optional list of input names
+        output_names: optional list of output names
+        opset_version: ONNX opset version
+        dynamic_axes: dynamic axes mapping for inputs/outputs
+        verbose: pass verbose flag to torch.onnx.export
+
+    Returns:
+        The filepath where the ONNX model was saved.
+    """
+    model_cpu = model
+    was_training = model_cpu.training
+    model_cpu.eval()
+
+    # Default names
+    if input_names is None:
+        input_names = ["input"]
+    if output_names is None:
+        output_names = ["output"]
+
+    # Export
+    torch.onnx.export(
+        model_cpu,
+        dummy_input,
+        filepath,
+        input_names=input_names,
+        output_names=output_names,
+        opset_version=opset_version,
+        dynamic_axes=dynamic_axes,
+        verbose=verbose,
+    )
+
+    # restore training state
+    model_cpu.train(was_training)
+    return filepath
+
+
+def fromONNX(onnx_path: str, inputs, providers: Optional[list] = None):
+    """
+    Run inference on an ONNX model using onnxruntime.
+
+    Args:
+        onnx_path: path to the ONNX model file
+        inputs: single input (tensor/ndarray) or dict mapping input names to data
+        providers: optional list of ONNXRuntime providers
+
+    Returns:
+        List of numpy outputs from the ONNX model (or single ndarray if one output)
+    """
+    sess_options = ort.SessionOptions()
+    if providers is None:
+        # default providers order
+        providers = None
+
+    # Use only available providers to avoid noisy warnings when optional providers
+    # are not installed in the environment.
+    available = ort.get_available_providers()
+    sess = ort.InferenceSession(
+        onnx_path,
+        sess_options=sess_options,
+        providers=(providers if providers is not None else available) or None,
+    )
+
+    # Build input dict
+    input_map = {}
+    ort_inputs = sess.get_inputs()
+    if isinstance(inputs, dict):
+        for k, v in inputs.items():
+            if hasattr(v, 'cpu'):
+                v = v.cpu().detach().numpy()
+            input_map[k] = np.asarray(v)
+    else:
+        # single input -> map to first input name
+        v = inputs
+        if hasattr(v, 'cpu'):
+            v = v.cpu().detach().numpy()
+        input_map[ort_inputs[0].name] = np.asarray(v)
+
+    out = sess.run(None, input_map)
+    if len(out) == 1:
+        return out[0]
+    return out

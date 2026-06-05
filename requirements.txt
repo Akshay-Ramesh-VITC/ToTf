@@ -16,3 +16,7 @@ torchview>=0.2.6  # For PyTorch ModelView
 # pytest>=7.4.0
 # black>=23.0.0
 # flake8>=6.0.0
+
+onnx
+onnxruntime
+tf2onnx # Specifically for the TF-to-ONNX routing

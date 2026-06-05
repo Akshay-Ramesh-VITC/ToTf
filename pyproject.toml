@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ToTf"
-version = "0.2.2"
+version = "0.2.3"
 description = "A Cross-Library Compatible Library for PyTorch and TensorFlow that provides advanced features for ease of use"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -42,6 +42,9 @@ dependencies = [
     "tqdm>=4.60",
     "psutil>=5.9.0",
     "numpy>=1.24.0",
+    "onnx",
+    "onnxruntime",
+    "tf2onnx"  # Specifically for the TF-to-ONNX routing
 ]
 
 [project.optional-dependencies]

@@ -68,7 +68,7 @@ Publication-quality neural network architecture diagrams for both frameworks:
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+pip install ToTf
 ```
 
 ### System Requirements for ModelView
@@ -113,6 +113,59 @@ conda install -c conda-forge graphviz
 - Run `python verify_modelview_pytorch.py` to test PyTorch ModelView installation
 - Run `python verify_modelview.py` to test TensorFlow ModelView installation
 - Run `pytest test/` to run full test suite
+
+## ONNX Export & Inference
+
+ToTf provides convenient ONNX export and inference wrappers for both PyTorch and TensorFlow models.
+
+Examples:
+
+- Export a PyTorch model to ONNX and run inference using ONNX Runtime:
+
+```python
+from ToTf import toONNX, fromONNX
+import torch
+
+model = torch.nn.Sequential(
+    torch.nn.Conv2d(1, 4, 3),
+    torch.nn.ReLU(),
+    torch.nn.AdaptiveAvgPool2d((1, 1)),
+    torch.nn.Flatten(),
+    torch.nn.Linear(4, 10)
+)
+
+dummy = torch.randn(1, 1, 8, 8)
+onnx_path = toONNX(model, dummy, "model_pytorch.onnx")
+
+# Run ONNX inference (returns numpy array)
+out = fromONNX(onnx_path, dummy.numpy())
+print(out.shape)
+```
+
+- Export a Keras model to ONNX (requires `tf2onnx`) and run inference:
+
+```python
+from ToTf import toONNX, fromONNX
+import numpy as np
+import tensorflow as tf
+
+model = tf.keras.Sequential([
+    tf.keras.layers.InputLayer(input_shape=(8,8,1)),
+    tf.keras.layers.Conv2D(4,3,activation='relu'),
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dense(10)
+])
+
+dummy = np.random.randn(1,8,8,1).astype(np.float32)
+onnx_path = toONNX(model, "model_tf.onnx", example_input=dummy)
+out = fromONNX(onnx_path, dummy)
+print(out.shape)
+```
+
+Notes:
+- The PyTorch `toONNX` uses `torch.onnx.export` (opset default 11). Pass `opset_version` or `dynamic_axes` as needed.
+- The TensorFlow `toONNX` uses `tf2onnx` and requires it to be installed (`tf2onnx` is listed in the project requirements).
+- `fromONNX` uses `onnxruntime` for inference; you can pass custom `providers` if needed.
 
 ## Table of Contents
 - [Installation](#installation)
@@ -1243,9 +1296,6 @@ python test/test_utils_tf.py
 
 # Test Cross-Framework Integration
 python test/test_utils_integration.py
-```
-
-All tests pass with 100% success rate ✓
 
 ---
 
@@ -1336,6 +1386,8 @@ pytest test/test_utils_tf.py -v          # Utilities tests
 
 ## What's New
 
+**v0.2.3 ONNX Support**
+- ✅ **toONNX** and **fromONNX** have been added to support ONNX
 **v0.2.2 Connection Extraction Fix** 🔧
 - ✅ **Fixed connection extraction** - Edges now properly displayed in complex architectures
 - ✅ **Improved graph visualization** - Parallel branches, cross-connections, and merge points now visible
@@ -1347,7 +1399,7 @@ pytest test/test_utils_tf.py -v          # Utilities tests
 - ✅ **Multiple branches & cross-connections** - Inception, DenseNet, DAG structures
 - ✅ **Advanced topologies** - Parallel branches, skip connections, multi-output
 - ✅ **Demo examples** - 5 complex architecture visualization demos
-- ✅ **Test suite expanded** - 41 total tests, 100% passing
+- ✅ **Test suite expanded** - 41 total tests
 
 **v0.2.0 - ModelView Release**
 - ✅ **ModelView for TensorFlow** - Publication-quality architecture diagrams

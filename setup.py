@@ -9,16 +9,16 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="ToTf",
-    version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    version="0.2.3",
+    author="Akshay",
+    author_email="akshay.r2023@vitstudent.ac.in",
     description="A Cross-Library Compatible Library for PyTorch and TensorFlow",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/ToTf",
+    url="https://github.com/Akshay-Ramesh-VITC/ToTf",
     packages=find_packages(),
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -33,6 +33,9 @@ setup(
     install_requires=[
         "tqdm>=4.65.0",
         "psutil>=5.9.0",
+        "onnx",
+        "onnxruntime",
+        "tf2onnx"  # Specifically for the TF-to-ONNX routing
     ],
     extras_require={
         "torch": ["torch>=2.0.0"],
