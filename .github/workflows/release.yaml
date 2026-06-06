@@ -29,6 +29,52 @@ jobs:
           python -m pip install --upgrade pip
           pip install build twine
 
+      # - name: Bump Version
+      #   id: bump
+      #   run: |
+      #     python << 'EOF'
+      #     import re
+      #     from pathlib import Path
+
+      #     pyproject = Path("pyproject.toml")
+
+      #     content = pyproject.read_text()
+
+      #     match = re.search(
+      #         r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"',
+      #         content
+      #     )
+
+      #     if not match:
+      #         raise Exception("Version not found in pyproject.toml")
+
+      #     major, minor, patch = map(int, match.groups())
+
+      #     patch += 1
+
+      #     # Custom rollover:
+      #     # 0.2.9 -> 0.3.0
+      #     if patch > 9:
+      #         patch = 0
+      #         minor += 1
+
+      #     new_version = f"{major}.{minor}.{patch}"
+
+      #     updated = re.sub(
+      #         r'version\s*=\s*"\d+\.\d+\.\d+"',
+      #         f'version = "{new_version}"',
+      #         content
+      #     )
+
+      #     pyproject.write_text(updated)
+
+      #     with open("version.txt", "w") as f:
+      #         f.write(new_version)
+
+      #     print(f"Updated version: {new_version}")
+      #     EOF
+
+      #     echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
       - name: Bump Version
         id: bump
         run: |
@@ -36,46 +82,49 @@ jobs:
           import re
           from pathlib import Path
 
+          # 1. Define file paths
           pyproject = Path("pyproject.toml")
+          setup_py = Path("setup.py")
+          init_py = Path("ToTf/__init__.py") 
 
+          # 2. Get the new version
           content = pyproject.read_text()
-
-          match = re.search(
-              r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"',
-              content
-          )
-
-          if not match:
-              raise Exception("Version not found in pyproject.toml")
+          match = re.search(r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"', content)
+          if not match: raise Exception("Version not found in pyproject.toml")
 
           major, minor, patch = map(int, match.groups())
-
           patch += 1
-
-          # Custom rollover:
-          # 0.2.9 -> 0.3.0
           if patch > 9:
               patch = 0
               minor += 1
-
           new_version = f"{major}.{minor}.{patch}"
 
-          updated = re.sub(
-              r'version\s*=\s*"\d+\.\d+\.\d+"',
-              f'version = "{new_version}"',
-              content
-          )
+          # 3. Update pyproject.toml
+          pyproject.write_text(re.sub(r'version\s*=\s*"\d+\.\d+\.\d+"', f'version = "{new_version}"', content))
 
-          pyproject.write_text(updated)
+          # 4. Update setup.py if it exists
+          if setup_py.exists():
+              setup_py.write_text(re.sub(r'version\s*=\s*["\']\d+\.\d+\.\d+["\']', f'version="{new_version}"', setup_py.read_text()))
+
+          # 5. Update ToTf/__init__.py
+          if init_py.exists():
+              init_content = init_py.read_text()
+              # Replaces __version__ = "x.y.z"
+              updated_init = re.sub(r'__version__\s*=\s*["\']\d+\.\d+\.\d+["\']', f'__version__ = "{new_version}"', init_content)
+              init_py.write_text(updated_init)
 
           with open("version.txt", "w") as f:
               f.write(new_version)
-
-          print(f"Updated version: {new_version}")
           EOF
-
           echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
 
+      - name: Commit Version Update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml setup.py ToTf/__init__.py
+          git commit -m "chore: release v${{ steps.bump.outputs.version }}" || echo "No changes to commit"
+          git push
       - name: Commit Version Update
         run: |
           git config user.name "github-actions[bot]"
