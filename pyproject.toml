@@ -105,10 +105,10 @@ test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/ToTf"
-Documentation = "https://github.com/yourusername/ToTf#readme"
-Repository = "https://github.com/yourusername/ToTf"
-"Bug Tracker" = "https://github.com/yourusername/ToTf/issues"
+Homepage = "https://github.com/Akshay-Ramesh-VITC/ToTf"
+Documentation = "https://github.com/Akshay-Ramesh-VITC/ToTf#readme"
+Repository = "https://github.com/Akshay-Ramesh-VITC/ToTf"
+"Bug Tracker" = "https://github.com/Akshay-Ramesh-VITC/ToTf/issues"
 
 [tool.setuptools]
 packages = ["pytorch", "tenf"]
