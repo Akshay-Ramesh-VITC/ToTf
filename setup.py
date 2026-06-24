@@ -9,7 +9,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="ToTf",
-    version="0.2.3",
+    version="0.2.4",
     author="Akshay",
     author_email="akshay.r2023@vitstudent.ac.in",
     description="A Cross-Library Compatible Library for PyTorch and TensorFlow",
