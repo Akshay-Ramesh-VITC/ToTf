@@ -111,7 +111,7 @@ Repository = "https://github.com/Akshay-Ramesh-VITC/ToTf"
 "Bug Tracker" = "https://github.com/Akshay-Ramesh-VITC/ToTf/issues"
 
 [tool.setuptools]
-packages = ["pytorch", "tenf"]
+packages = ["ToTf"]
 
 [tool.setuptools.package-data]
 "*" = ["*.md", "*.json"]
