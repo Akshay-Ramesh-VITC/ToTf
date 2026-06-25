@@ -110,7 +110,7 @@ Documentation = "https://github.com/Akshay-Ramesh-VITC/ToTf#readme"
 Repository = "https://github.com/Akshay-Ramesh-VITC/ToTf"
 "Bug Tracker" = "https://github.com/Akshay-Ramesh-VITC/ToTf/issues"
 
-[tool.setuptools]
+[tool.setuptools.packages.find]
 packages = ["ToTf"]
 
 [tool.setuptools.package-data]
