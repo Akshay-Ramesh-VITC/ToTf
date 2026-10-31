@@ -14,7 +14,7 @@ from .backend_manager import (
     freeze_batchnorm,
 )
 
-__version__ = "0.2.6"
+__version__ = "0.2.9"
 __author__ = "Akshay"
 __all__ = [
     "get_backend",
