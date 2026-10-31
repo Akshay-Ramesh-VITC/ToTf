@@ -24,7 +24,7 @@ from .backend_manager import (
     transfer_weights,
 )
 
-__version__ = "0.2.5"
+__version__ = "0.2.9"
 __author__ = "Akshay"
 __all__ = [
     "get_backend",
