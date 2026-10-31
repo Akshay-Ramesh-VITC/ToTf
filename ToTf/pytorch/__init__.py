@@ -11,7 +11,12 @@ from .utils import (
     loss_ncc,
     ncc_score,
     LRFinder,
-    find_lr
+    find_lr,
+    seed_everything,
+    inspect_tensor,
+    freeze_layers,
+    unfreeze_layers,
+    freeze_batchnorm,
 )
 
 __all__ = [
@@ -24,5 +29,10 @@ __all__ = [
     "loss_ncc",
     "ncc_score",
     "LRFinder",
-    "find_lr"
+    "find_lr",
+    "seed_everything",
+    "inspect_tensor",
+    "freeze_layers",
+    "unfreeze_layers",
+    "freeze_batchnorm",
 ]

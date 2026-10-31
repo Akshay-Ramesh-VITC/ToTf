@@ -52,6 +52,21 @@ Framework-agnostic "missing" functions that save time and improve code quality:
 - **`LRFinder`** - Full-featured LR range test class with plotting
 - **Use case**: Automatically discover the best learning rate before training (fast.ai style), avoid manual tuning
 
+#### Cross-Framework Reproducibility
+- **`seed_everything(seed=42, deterministic=False, benchmark=False, verbose=False)`** - Seeds Python, NumPy, PyTorch (CPU & CUDA), and TensorFlow in a single call. Optionally sets deterministic algorithms and cuBLAS workspace config.
+- **Use case**: Guaranteed reproducible experiments and benchmarks across backends without repeating 10 lines of boilerplate.
+
+#### Tensor Health & Diagnostics
+- **`inspect_tensor(tensor, name=None, print_info=True, quantiles=True)`** - One-line diagnostic inspector for PyTorch, TensorFlow, or NumPy tensors.
+- **Information provided**: Shape, dtype, device, memory MB, element count, NaN/Inf detection, zero sparsity %, min, max, mean, std, and quantiles (p25, p50, p75).
+- **Use case**: Rapid sanity-checking and debugging of activations, embeddings, and gradients.
+
+#### Transfer Learning & Fine-Tuning
+- **`freeze_layers(model, up_to=None, layer_names=None, layer_types=None, regex=None)`** - Freeze model parameters/layers (supports both `torch.nn.Module` and `tf.keras.Model`).
+- **`unfreeze_layers(model, last_n=None, layer_names=None, layer_types=None, regex=None)`** - Selectively unfreeze layers (e.g., `last_n=1` for classification heads).
+- **`freeze_batchnorm(model, freeze_eval=True)`** - Lock BatchNorm affine parameters and freeze running statistics (eval mode) during fine-tuning.
+- **Use case**: Effortless backbone freezing and transfer learning across both frameworks.
+
 ### 📊 ModelView (PyTorch & TensorFlow)
 Publication-quality neural network architecture diagrams for both frameworks:
 - **PyTorch support** - Wraps torchview for comprehensive PyTorch model visualization

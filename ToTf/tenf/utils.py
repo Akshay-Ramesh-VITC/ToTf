@@ -5,6 +5,10 @@ Provides:
 - lazy_flatten: Auto-shape flattener for transitioning from Conv to Dense layers
 - loss_ncc: Normalized Cross-Correlation loss (for medical imaging)
 - find_lr: Learning Rate Finder (LR range test)
+- seed_everything: Cross-framework reproducible seed setter
+- inspect_tensor: Diagnostic tensor statistics, memory, and health inspector
+- freeze_layers / unfreeze_layers: Selective layer freezing for transfer learning
+- freeze_batchnorm: Freeze BatchNormalization parameters and running statistics
 """
 
 import tensorflow as tf
@@ -14,6 +18,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import copy
+import re
+import os
+import random
 import onnx
 import onnxruntime as ort
 try:
@@ -609,3 +616,429 @@ def find_lr(
         return 1e-3
     
     return best_lr
+
+
+def seed_everything(
+    seed: int = 42,
+    deterministic: bool = False,
+    benchmark: bool = False,
+    verbose: bool = False,
+) -> int:
+    """
+    Sets seeds across Python, NumPy, TensorFlow, and PyTorch for reproducibility.
+
+    Args:
+        seed: The integer seed value (default: 42).
+        deterministic: If True, instructs TensorFlow to enable op determinism.
+        benchmark: If True and deterministic is False, sets torch cudnn.benchmark if torch is installed.
+        verbose: If True, prints messages about which backends were seeded.
+
+    Returns:
+        The integer seed used.
+    """
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    seeded = ["python", "numpy"]
+
+    tf.random.set_seed(seed)
+    if deterministic:
+        try:
+            tf.config.experimental.enable_op_determinism()
+        except Exception:
+            pass
+    seeded.append("tensorflow")
+
+    try:
+        import torch
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
+        if deterministic:
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+            try:
+                torch.use_deterministic_algorithms(True, warn_only=True)
+            except Exception:
+                pass
+        elif benchmark:
+            torch.backends.cudnn.benchmark = True
+        seeded.append("torch")
+    except ImportError:
+        pass
+
+    if verbose:
+        print(f"[ToTf] Seeded {', '.join(seeded)} with seed={seed} (deterministic={deterministic})")
+
+    return seed
+
+
+def inspect_tensor(
+    tensor: Any,
+    name: Optional[str] = None,
+    print_info: bool = True,
+    quantiles: bool = True,
+) -> Dict[str, Any]:
+    """
+    Inspects a tensor (TensorFlow, PyTorch, or NumPy) and provides a comprehensive diagnostic
+    summary including shape, dtype, device, memory footprint, statistics, NaN/Inf detection,
+    and quantiles.
+
+    Args:
+        tensor: Tensor, variable, or array to inspect.
+        name: Optional identifier or label for the tensor (e.g. 'layer1_act').
+        print_info: If True, prints formatted summary.
+        quantiles: If True, computes 25th, 50th (median), and 75th percentiles.
+
+    Returns:
+        Dict containing all measured metrics.
+    """
+    framework = "numpy"
+    device_str = "cpu"
+    min_val = None
+    max_val = None
+    mean_val = None
+    std_val = None
+    zero_count = 0
+    sparsity_pct = 0.0
+    has_nan = False
+    nan_count = 0
+    has_inf = False
+    inf_count = 0
+    q_dict: Dict[str, float] = {}
+
+    if isinstance(tensor, (tf.Tensor, tf.Variable)):
+        framework = "tensorflow"
+        shape = tuple(tensor.shape.as_list()) if hasattr(tensor.shape, "as_list") else tuple(tensor.shape)
+        dtype_str = tensor.dtype.name
+        device_str = getattr(tensor, "device", "cpu") or "cpu"
+        try:
+            arr = tensor.numpy()
+        except Exception:
+            arr = np.asarray(tensor)
+        numel = arr.size
+        itemsize = arr.itemsize
+
+        if numel > 0:
+            if np.issubdtype(arr.dtype, np.floating):
+                isnan = np.isnan(arr)
+                nan_count = int(np.sum(isnan))
+                has_nan = nan_count > 0
+
+                isinf = np.isinf(arr)
+                inf_count = int(np.sum(isinf))
+                has_inf = inf_count > 0
+
+                zero_count = int(np.sum(arr == 0))
+                sparsity_pct = (zero_count / numel) * 100.0
+
+                valid = arr[~(isnan | isinf)]
+                if valid.size > 0:
+                    min_val = float(np.min(valid))
+                    max_val = float(np.max(valid))
+                    mean_val = float(np.mean(valid))
+                    std_val = float(np.std(valid)) if valid.size > 1 else 0.0
+                    if quantiles:
+                        q = np.percentile(valid, [25, 50, 75])
+                        q_dict = {"p25": float(q[0]), "p50": float(q[1]), "p75": float(q[2])}
+            elif np.issubdtype(arr.dtype, np.number):
+                zero_count = int(np.sum(arr == 0))
+                sparsity_pct = (zero_count / numel) * 100.0
+                min_val = float(np.min(arr))
+                max_val = float(np.max(arr))
+                mean_val = float(np.mean(arr))
+                std_val = float(np.std(arr)) if numel > 1 else 0.0
+                if quantiles:
+                    q = np.percentile(arr, [25, 50, 75])
+                    q_dict = {"p25": float(q[0]), "p50": float(q[1]), "p75": float(q[2])}
+    else:
+        is_torch = False
+        try:
+            import torch
+            if isinstance(tensor, torch.Tensor):
+                is_torch = True
+        except ImportError:
+            pass
+
+        if is_torch:
+            framework = "torch"
+            shape = tuple(tensor.shape)
+            dtype_str = str(tensor.dtype).replace("torch.", "")
+            device_str = str(tensor.device)
+            numel = tensor.numel()
+            itemsize = tensor.element_size()
+
+            if numel > 0:
+                if tensor.is_floating_point() or tensor.is_complex():
+                    isnan = torch.isnan(tensor)
+                    nan_count = int(torch.sum(isnan).item())
+                    has_nan = nan_count > 0
+
+                    isinf = torch.isinf(tensor)
+                    inf_count = int(torch.sum(isinf).item())
+                    has_inf = inf_count > 0
+
+                    zero_count = int(torch.sum(tensor == 0).item())
+                    sparsity_pct = (zero_count / numel) * 100.0
+
+                    valid_mask = ~(isnan | isinf)
+                    valid_count = int(torch.sum(valid_mask).item())
+                    if valid_count > 0:
+                        valid_vals = tensor[valid_mask].float()
+                        min_val = float(torch.min(valid_vals).item())
+                        max_val = float(torch.max(valid_vals).item())
+                        mean_val = float(torch.mean(valid_vals).item())
+                        std_val = float(torch.std(valid_vals).item()) if valid_count > 1 else 0.0
+                        if quantiles:
+                            q = torch.quantile(valid_vals, torch.tensor([0.25, 0.50, 0.75], device=valid_vals.device))
+                            q_dict = {
+                                "p25": float(q[0].item()),
+                                "p50": float(q[1].item()),
+                                "p75": float(q[2].item()),
+                            }
+                else:
+                    zero_count = int(torch.sum(tensor == 0).item())
+                    sparsity_pct = (zero_count / numel) * 100.0
+                    t_float = tensor.float()
+                    min_val = float(torch.min(t_float).item())
+                    max_val = float(torch.max(t_float).item())
+                    mean_val = float(torch.mean(t_float).item())
+                    std_val = float(torch.std(t_float).item()) if numel > 1 else 0.0
+                    if quantiles:
+                        q = torch.quantile(t_float, torch.tensor([0.25, 0.50, 0.75], device=t_float.device))
+                        q_dict = {
+                            "p25": float(q[0].item()),
+                            "p50": float(q[1].item()),
+                            "p75": float(q[2].item()),
+                        }
+        else:
+            arr = np.asarray(tensor)
+            framework = "numpy"
+            shape = arr.shape
+            dtype_str = str(arr.dtype)
+            device_str = "cpu"
+            numel = arr.size
+            itemsize = arr.itemsize
+
+            if numel > 0:
+                if np.issubdtype(arr.dtype, np.floating):
+                    isnan = np.isnan(arr)
+                    nan_count = int(np.sum(isnan))
+                    has_nan = nan_count > 0
+
+                    isinf = np.isinf(arr)
+                    inf_count = int(np.sum(isinf))
+                    has_inf = inf_count > 0
+
+                    zero_count = int(np.sum(arr == 0))
+                    sparsity_pct = (zero_count / numel) * 100.0
+
+                    valid = arr[~(isnan | isinf)]
+                    if valid.size > 0:
+                        min_val = float(np.min(valid))
+                        max_val = float(np.max(valid))
+                        mean_val = float(np.mean(valid))
+                        std_val = float(np.std(valid)) if valid.size > 1 else 0.0
+                        if quantiles:
+                            q = np.percentile(valid, [25, 50, 75])
+                            q_dict = {"p25": float(q[0]), "p50": float(q[1]), "p75": float(q[2])}
+                elif np.issubdtype(arr.dtype, np.number):
+                    zero_count = int(np.sum(arr == 0))
+                    sparsity_pct = (zero_count / numel) * 100.0
+                    min_val = float(np.min(arr))
+                    max_val = float(np.max(arr))
+                    mean_val = float(np.mean(arr))
+                    std_val = float(np.std(arr)) if numel > 1 else 0.0
+                    if quantiles:
+                        q = np.percentile(arr, [25, 50, 75])
+                        q_dict = {"p25": float(q[0]), "p50": float(q[1]), "p75": float(q[2])}
+
+    memory_mb = (numel * itemsize) / (1024 * 1024)
+
+    tag = f"Tensor: {name}" if name else "Tensor"
+    line1 = f"[{tag}] Framework: {framework} | Shape: {shape} | Dtype: {dtype_str} | Device: {device_str} | Mem: {memory_mb:.4f} MB ({numel:,} elements)"
+    if min_val is not None:
+        line2 = f"  Stats: Min={min_val:.4f} | Mean={mean_val:.4f} | Max={max_val:.4f} | Std={std_val:.4f} | Zeros={zero_count} ({sparsity_pct:.1f}%)"
+    else:
+        line2 = "  Stats: Empty or Non-numeric"
+    line3 = f"  Health: NaNs={nan_count} | Infs={inf_count}"
+    if q_dict:
+        line3 += f" | Quantiles: [p25={q_dict['p25']:.4f}, p50={q_dict['p50']:.4f}, p75={q_dict['p75']:.4f}]"
+
+    summary_text = f"{line1}\n{line2}\n{line3}"
+    if print_info:
+        print(summary_text)
+
+    return {
+        "name": name,
+        "framework": framework,
+        "shape": shape,
+        "dtype": dtype_str,
+        "device": device_str,
+        "numel": numel,
+        "memory_mb": memory_mb,
+        "min": min_val,
+        "max": max_val,
+        "mean": mean_val,
+        "std": std_val,
+        "zeros_count": zero_count,
+        "sparsity_pct": sparsity_pct,
+        "has_nan": has_nan,
+        "nan_count": nan_count,
+        "has_inf": has_inf,
+        "inf_count": inf_count,
+        "quantiles": q_dict,
+        "summary": summary_text,
+    }
+
+
+def freeze_layers(
+    model: keras.Model,
+    up_to: Optional[Union[str, int]] = None,
+    layer_names: Optional[List[str]] = None,
+    layer_types: Optional[Tuple[type, ...]] = None,
+    regex: Optional[str] = None,
+) -> int:
+    """
+    Freeze layers in a Keras/TensorFlow model for transfer learning or fine-tuning.
+
+    Args:
+        model: Keras Model instance.
+        up_to: Either an int (freeze the first N layers in model.layers)
+               or a str (freeze all layers up to and including the layer named `up_to`).
+        layer_names: List of layer name substrings to freeze.
+        layer_types: Tuple of layer types to freeze (e.g. (layers.Conv2D, layers.Dense)).
+        regex: Regular expression string matched against layer names.
+
+    Returns:
+        Number of layers frozen.
+    """
+    compiled_regex = re.compile(regex) if regex else None
+    layers_to_freeze = set()
+
+    # 1. up_to
+    if up_to is not None:
+        if isinstance(up_to, int):
+            for l in model.layers[:up_to]:
+                layers_to_freeze.add(l)
+        elif isinstance(up_to, str):
+            for l in model.layers:
+                layers_to_freeze.add(l)
+                if l.name == up_to or l.name.endswith(f"/{up_to}"):
+                    break
+
+    # 2. layer_types
+    if layer_types is not None:
+        for l in model.layers:
+            if isinstance(l, layer_types):
+                layers_to_freeze.add(l)
+
+    # 3. layer_names
+    if layer_names is not None:
+        for l in model.layers:
+            if any(target in l.name for target in layer_names):
+                layers_to_freeze.add(l)
+
+    # 4. regex
+    if compiled_regex is not None:
+        for l in model.layers:
+            if compiled_regex.search(l.name):
+                layers_to_freeze.add(l)
+
+    # 5. Default: freeze all layers
+    if up_to is None and layer_names is None and layer_types is None and regex is None:
+        for l in model.layers:
+            layers_to_freeze.add(l)
+
+    frozen_count = 0
+    for l in layers_to_freeze:
+        if l.trainable:
+            l.trainable = False
+            frozen_count += 1
+
+    return frozen_count
+
+
+def unfreeze_layers(
+    model: keras.Model,
+    last_n: Optional[int] = None,
+    layer_names: Optional[List[str]] = None,
+    layer_types: Optional[Tuple[type, ...]] = None,
+    regex: Optional[str] = None,
+) -> int:
+    """
+    Unfreeze layers in a Keras/TensorFlow model.
+
+    Args:
+        model: Keras Model instance.
+        last_n: If provided, unfreezes the last N layers in model.layers (e.g. classification head).
+        layer_names: List of layer name substrings to unfreeze.
+        layer_types: Tuple of layer types to unfreeze.
+        regex: Regular expression string matched against layer names.
+
+    Returns:
+        Number of layers unfrozen.
+    """
+    compiled_regex = re.compile(regex) if regex else None
+    layers_to_unfreeze = set()
+
+    if last_n is not None:
+        target = model.layers[-last_n:] if last_n > 0 else []
+        for l in target:
+            layers_to_unfreeze.add(l)
+
+    if layer_types is not None:
+        for l in model.layers:
+            if isinstance(l, layer_types):
+                layers_to_unfreeze.add(l)
+
+    if layer_names is not None:
+        for l in model.layers:
+            if any(target in l.name for target in layer_names):
+                layers_to_unfreeze.add(l)
+
+    if compiled_regex is not None:
+        for l in model.layers:
+            if compiled_regex.search(l.name):
+                layers_to_unfreeze.add(l)
+
+    if last_n is None and layer_names is None and layer_types is None and regex is None:
+        for l in model.layers:
+            layers_to_unfreeze.add(l)
+
+    unfrozen_count = 0
+    for l in layers_to_unfreeze:
+        if not l.trainable:
+            l.trainable = True
+            unfrozen_count += 1
+
+    return unfrozen_count
+
+
+def freeze_batchnorm(model: keras.Model) -> int:
+    """
+    Freeze all BatchNormalization layers in a Keras model.
+    In Keras, setting layer.trainable = False on BatchNormalization freezes both
+    affine weights and prevents updates to moving_mean and moving_variance during training.
+
+    Args:
+        model: Keras Model instance.
+
+    Returns:
+        Number of BatchNormalization layers frozen.
+    """
+    bn_types = (
+        keras.layers.BatchNormalization,
+        tf.keras.layers.BatchNormalization,
+    )
+    count = 0
+    for l in model.layers:
+        if isinstance(l, bn_types):
+            if l.trainable:
+                l.trainable = False
+                count += 1
+        elif hasattr(l, "layers"):
+            count += freeze_batchnorm(l)
+    return count

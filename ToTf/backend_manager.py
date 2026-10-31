@@ -44,7 +44,7 @@ def _is_torch_tensor(obj: Any) -> bool:
 def _is_tf_tensor(obj: Any) -> bool:
     try:
         import tensorflow as tf
-        return isinstance(obj, tf.Tensor) or isinstance(obj, tf.keras.Model)
+        return isinstance(obj, (tf.Tensor, tf.Variable, tf.keras.Model, tf.keras.layers.Layer))
     except Exception:
         return False
 
@@ -225,3 +225,77 @@ def fromONNX(onnx_path: str, *args, backend_name: Optional[str] = None, **kwargs
         raise ImportError(f"fromONNX not implemented in backend utils for '{b}'")
 
     return fn(onnx_path, *args, **kwargs)
+
+
+def seed_everything(
+    seed: int = 42,
+    deterministic: bool = False,
+    benchmark: bool = False,
+    verbose: bool = False,
+    backend_name: Optional[str] = None,
+) -> int:
+    """
+    Sets seeds across Python, NumPy, PyTorch, and TensorFlow for reproducibility.
+    """
+    b = backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is not None and hasattr(impl_mod, "seed_everything"):
+        return impl_mod.seed_everything(seed=seed, deterministic=deterministic, benchmark=benchmark, verbose=verbose)
+    # Fallback to direct seeding
+    import os
+    import random
+    import numpy as np
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    return seed
+
+
+def inspect_tensor(
+    tensor: Any,
+    name: Optional[str] = None,
+    print_info: bool = True,
+    quantiles: bool = True,
+    backend_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Inspects a tensor (Torch, TF, or NumPy) and returns detailed statistics and health metrics.
+    """
+    b = _choose_backend_from_obj(tensor) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "inspect_tensor"):
+        raise ImportError(f"inspect_tensor utils not available for backend '{b}'")
+    return impl_mod.inspect_tensor(tensor, name=name, print_info=print_info, quantiles=quantiles)
+
+
+def freeze_layers(model: Any, *args, backend_name: Optional[str] = None, **kwargs) -> int:
+    """
+    Freeze layers or parameters in a PyTorch or TensorFlow model for transfer learning.
+    """
+    b = _choose_backend_from_obj(model) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "freeze_layers"):
+        raise ImportError(f"freeze_layers utils not available for backend '{b}'")
+    return impl_mod.freeze_layers(model, *args, **kwargs)
+
+
+def unfreeze_layers(model: Any, *args, backend_name: Optional[str] = None, **kwargs) -> int:
+    """
+    Unfreeze layers or parameters in a PyTorch or TensorFlow model.
+    """
+    b = _choose_backend_from_obj(model) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "unfreeze_layers"):
+        raise ImportError(f"unfreeze_layers utils not available for backend '{b}'")
+    return impl_mod.unfreeze_layers(model, *args, **kwargs)
+
+
+def freeze_batchnorm(model: Any, *args, backend_name: Optional[str] = None, **kwargs) -> int:
+    """
+    Freeze BatchNorm layers in a PyTorch or TensorFlow model.
+    """
+    b = _choose_backend_from_obj(model) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "freeze_batchnorm"):
+        raise ImportError(f"freeze_batchnorm utils not available for backend '{b}'")
+    return impl_mod.freeze_batchnorm(model, *args, **kwargs)
