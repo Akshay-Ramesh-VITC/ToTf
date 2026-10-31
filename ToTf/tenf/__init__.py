@@ -17,6 +17,16 @@ from .utils import (
     freeze_layers,
     unfreeze_layers,
     freeze_batchnorm,
+    loss_focal,
+    FocalLoss,
+    loss_dice,
+    DiceLoss,
+    dice_score,
+    iou_score,
+    AnomalyDetector,
+    check_anomalies,
+    benchmark_model,
+    transfer_weights,
 )
 
 __all__ = [
@@ -35,4 +45,14 @@ __all__ = [
     'freeze_layers',
     'unfreeze_layers',
     'freeze_batchnorm',
+    'loss_focal',
+    'FocalLoss',
+    'loss_dice',
+    'DiceLoss',
+    'dice_score',
+    'iou_score',
+    'AnomalyDetector',
+    'check_anomalies',
+    'benchmark_model',
+    'transfer_weights',
 ]

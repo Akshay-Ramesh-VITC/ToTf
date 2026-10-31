@@ -299,3 +299,113 @@ def freeze_batchnorm(model: Any, *args, backend_name: Optional[str] = None, **kw
     if impl_mod is None or not hasattr(impl_mod, "freeze_batchnorm"):
         raise ImportError(f"freeze_batchnorm utils not available for backend '{b}'")
     return impl_mod.freeze_batchnorm(model, *args, **kwargs)
+
+
+def loss_focal(y_true: Any, y_pred: Any, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Dispatch to framework-specific Focal Loss.
+    """
+    b = _choose_backend_from_obj(y_pred) or _choose_backend_from_obj(y_true) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "loss_focal"):
+        raise ImportError(f"loss_focal not available for backend '{b}'")
+    return impl_mod.loss_focal(y_true, y_pred, *args, **kwargs)
+
+
+def FocalLoss(*args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Factory creating a FocalLoss module (PyTorch nn.Module or Keras Loss).
+    """
+    b = backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "FocalLoss"):
+        raise ImportError(f"FocalLoss not available for backend '{b}'")
+    return impl_mod.FocalLoss(*args, **kwargs)
+
+
+def loss_dice(y_true: Any, y_pred: Any, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Dispatch to framework-specific Dice Loss.
+    """
+    b = _choose_backend_from_obj(y_pred) or _choose_backend_from_obj(y_true) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "loss_dice"):
+        raise ImportError(f"loss_dice not available for backend '{b}'")
+    return impl_mod.loss_dice(y_true, y_pred, *args, **kwargs)
+
+
+def DiceLoss(*args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Factory creating a DiceLoss module (PyTorch nn.Module or Keras Loss).
+    """
+    b = backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "DiceLoss"):
+        raise ImportError(f"DiceLoss not available for backend '{b}'")
+    return impl_mod.DiceLoss(*args, **kwargs)
+
+
+def dice_score(y_true: Any, y_pred: Any, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Dispatch to framework-specific Dice similarity score.
+    """
+    b = _choose_backend_from_obj(y_pred) or _choose_backend_from_obj(y_true) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "dice_score"):
+        raise ImportError(f"dice_score not available for backend '{b}'")
+    return impl_mod.dice_score(y_true, y_pred, *args, **kwargs)
+
+
+def iou_score(y_true: Any, y_pred: Any, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Dispatch to framework-specific IoU / Jaccard similarity score.
+    """
+    b = _choose_backend_from_obj(y_pred) or _choose_backend_from_obj(y_true) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "iou_score"):
+        raise ImportError(f"iou_score not available for backend '{b}'")
+    return impl_mod.iou_score(y_true, y_pred, *args, **kwargs)
+
+
+def AnomalyDetector(model: Any, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Create an AnomalyDetector instance attached to the model.
+    """
+    b = _choose_backend_from_obj(model) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "AnomalyDetector"):
+        raise ImportError(f"AnomalyDetector not available for backend '{b}'")
+    return impl_mod.AnomalyDetector(model, *args, **kwargs)
+
+
+def check_anomalies(model: Any, sample_input: Any, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Run forward pass and return any NaN/Inf anomalies detected.
+    """
+    b = _choose_backend_from_obj(model) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "check_anomalies"):
+        raise ImportError(f"check_anomalies not available for backend '{b}'")
+    return impl_mod.check_anomalies(model, sample_input, *args, **kwargs)
+
+
+def benchmark_model(model: Any, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Run full performance and complexity benchmark on a PyTorch or TensorFlow model.
+    """
+    b = _choose_backend_from_obj(model) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "benchmark_model"):
+        raise ImportError(f"benchmark_model not available for backend '{b}'")
+    return impl_mod.benchmark_model(model, *args, **kwargs)
+
+
+def transfer_weights(source_model: Any, target_model: Any, *args, backend_name: Optional[str] = None, **kwargs):
+    """
+    Direct in-memory weight transfer between PyTorch and TensorFlow models.
+    """
+    b = _choose_backend_from_obj(source_model) or _choose_backend_from_obj(target_model) or backend_name or get_default_backend()
+    impl_mod = _load_backend_impl(b, "utils")
+    if impl_mod is None or not hasattr(impl_mod, "transfer_weights"):
+        raise ImportError(f"transfer_weights not available for backend '{b}'")
+    return impl_mod.transfer_weights(source_model, target_model, *args, **kwargs)

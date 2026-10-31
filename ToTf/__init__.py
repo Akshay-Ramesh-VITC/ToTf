@@ -12,6 +12,16 @@ from .backend_manager import (
     freeze_layers,
     unfreeze_layers,
     freeze_batchnorm,
+    loss_focal,
+    FocalLoss,
+    loss_dice,
+    DiceLoss,
+    dice_score,
+    iou_score,
+    AnomalyDetector,
+    check_anomalies,
+    benchmark_model,
+    transfer_weights,
 )
 
 __version__ = "0.2.5"
@@ -30,6 +40,16 @@ __all__ = [
     "freeze_layers",
     "unfreeze_layers",
     "freeze_batchnorm",
+    "loss_focal",
+    "FocalLoss",
+    "loss_dice",
+    "DiceLoss",
+    "dice_score",
+    "iou_score",
+    "AnomalyDetector",
+    "check_anomalies",
+    "benchmark_model",
+    "transfer_weights",
 ]
 
 # Use backend_manager factories for dynamic dispatch to framework implementations

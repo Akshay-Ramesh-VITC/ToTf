@@ -21,6 +21,7 @@ import copy
 import re
 import os
 import random
+import time
 import onnx
 import onnxruntime as ort
 try:
@@ -1042,3 +1043,785 @@ def freeze_batchnorm(model: keras.Model) -> int:
         elif hasattr(l, "layers"):
             count += freeze_batchnorm(l)
     return count
+
+
+# =========================================================================
+# Phase 2: Domain Losses, Metrics & Anomaly Diagnostics
+# =========================================================================
+
+def loss_focal(
+    y_true: tf.Tensor,
+    y_pred: tf.Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2.0,
+    reduction: str = "mean",
+    from_logits: bool = False,
+    eps: float = 1e-8,
+) -> tf.Tensor:
+    """
+    Focal Loss for addressing class imbalance in TensorFlow / Keras (Lin et al., ICCV 2017).
+
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+
+    Supports binary/multilabel and multiclass classification.
+
+    Args:
+        y_true: Ground truth tensor (one-hot or probabilities matching y_pred shape, or class indices).
+        y_pred: Predicted probabilities or unnormalized logits.
+        alpha: Weighting factor for rare class (default: 0.25).
+        gamma: Focusing parameter (default: 2.0).
+        reduction: 'mean', 'sum', or 'none'.
+        from_logits: Whether y_pred contains raw logits or probabilities.
+        eps: Small constant for numerical stability.
+
+    Returns:
+        Focal loss tensor.
+    """
+    try:
+        import torch
+        if isinstance(y_true, torch.Tensor) or isinstance(y_pred, torch.Tensor):
+            from ToTf.pytorch.utils import loss_focal as th_loss_focal
+            return th_loss_focal(y_true, y_pred, alpha=alpha, gamma=gamma, reduction=reduction, from_logits=from_logits, eps=eps)
+    except ImportError:
+        pass
+
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
+
+    # If y_true is 1D class indices and y_pred is (*, C)
+    if len(y_true.shape) == len(y_pred.shape) - 1:
+        num_classes = y_pred.shape[-1]
+        y_true = tf.one_hot(tf.cast(y_true, tf.int32), depth=num_classes)
+
+    if from_logits:
+        prob = tf.sigmoid(y_pred)
+        bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_true, logits=y_pred)
+    else:
+        prob = tf.clip_by_value(y_pred, eps, 1.0 - eps)
+        bce = -(y_true * tf.math.log(prob + eps) + (1.0 - y_true) * tf.math.log(1.0 - prob + eps))
+
+    p_t = prob * y_true + (1.0 - prob) * (1.0 - y_true)
+    alpha_factor = alpha * y_true + (1.0 - alpha) * (1.0 - y_true)
+    loss = alpha_factor * tf.pow(1.0 - p_t, gamma) * bce
+
+    if reduction == "mean":
+        return tf.reduce_mean(loss)
+    elif reduction == "sum":
+        return tf.reduce_sum(loss)
+    return loss
+
+
+class FocalLoss(keras.losses.Loss):
+    """
+    Keras Loss class wrapper for Focal Loss.
+    """
+    def __init__(
+        self,
+        alpha: float = 0.25,
+        gamma: float = 2.0,
+        reduction: str = "mean",
+        from_logits: bool = False,
+        name: str = "focal_loss",
+        **kwargs
+    ):
+        super().__init__(name=name, **kwargs)
+        self.alpha = alpha
+        self.gamma = gamma
+        self.from_logits = from_logits
+        self.reduction_type = reduction
+
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+        return loss_focal(
+            y_true=y_true,
+            y_pred=y_pred,
+            alpha=self.alpha,
+            gamma=self.gamma,
+            reduction=self.reduction_type,
+            from_logits=self.from_logits,
+        )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "alpha": self.alpha,
+            "gamma": self.gamma,
+            "reduction_type": self.reduction_type,
+            "from_logits": self.from_logits,
+        })
+        return config
+
+
+def loss_dice(
+    y_true: tf.Tensor,
+    y_pred: tf.Tensor,
+    smooth: float = 1e-6,
+    from_logits: bool = False,
+    reduction: str = "mean",
+) -> tf.Tensor:
+    """
+    Dice Loss for image and volume segmentation in TensorFlow / Keras.
+
+    Dice = (2 * |X n Y| + smooth) / (|X| + |Y| + smooth)
+    Loss = 1.0 - Dice
+
+    Args:
+        y_true: Ground truth binary/probability masks.
+        y_pred: Predicted probabilities or logits.
+        smooth: Smoothing factor to prevent division by zero.
+        from_logits: If True, applies sigmoid to y_pred.
+        reduction: 'mean', 'sum', or 'none'.
+
+    Returns:
+        Dice loss value (range [0, 1]).
+    """
+    try:
+        import torch
+        if isinstance(y_true, torch.Tensor) or isinstance(y_pred, torch.Tensor):
+            from ToTf.pytorch.utils import loss_dice as th_loss_dice
+            return th_loss_dice(y_true, y_pred, smooth=smooth, from_logits=from_logits, reduction=reduction)
+    except ImportError:
+        pass
+
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
+    if from_logits:
+        y_pred = tf.sigmoid(y_pred)
+
+    batch_size = tf.shape(y_pred)[0]
+    pred_flat = tf.reshape(y_pred, [batch_size, -1])
+    true_flat = tf.reshape(y_true, [batch_size, -1])
+
+    intersection = tf.reduce_sum(pred_flat * true_flat, axis=1)
+    cardinality = tf.reduce_sum(pred_flat, axis=1) + tf.reduce_sum(true_flat, axis=1)
+
+    dice = (2.0 * intersection + smooth) / (cardinality + smooth)
+    loss = 1.0 - dice
+
+    if reduction == "mean":
+        return tf.reduce_mean(loss)
+    elif reduction == "sum":
+        return tf.reduce_sum(loss)
+    return loss
+
+
+class DiceLoss(keras.losses.Loss):
+    """
+    Keras Loss class wrapper for Dice Loss.
+    """
+    def __init__(
+        self,
+        smooth: float = 1e-6,
+        from_logits: bool = False,
+        reduction: str = "mean",
+        name: str = "dice_loss",
+        **kwargs
+    ):
+        super().__init__(name=name, **kwargs)
+        self.smooth = smooth
+        self.from_logits = from_logits
+        self.reduction_type = reduction
+
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+        return loss_dice(
+            y_true=y_true,
+            y_pred=y_pred,
+            smooth=self.smooth,
+            from_logits=self.from_logits,
+            reduction=self.reduction_type,
+        )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "smooth": self.smooth,
+            "from_logits": self.from_logits,
+            "reduction_type": self.reduction_type,
+        })
+        return config
+
+
+def dice_score(
+    y_true: tf.Tensor,
+    y_pred: tf.Tensor,
+    threshold: Optional[float] = 0.5,
+    smooth: float = 1e-6,
+) -> tf.Tensor:
+    """
+    Dice Similarity Coefficient (DSC) evaluation metric in TensorFlow.
+    """
+    y_true = tf.cast(y_true, tf.float32)
+    if threshold is not None:
+        y_pred = tf.cast(y_pred >= threshold, tf.float32)
+    else:
+        y_pred = tf.cast(y_pred, tf.float32)
+
+    batch_size = tf.shape(y_pred)[0]
+    pred_flat = tf.reshape(y_pred, [batch_size, -1])
+    true_flat = tf.reshape(y_true, [batch_size, -1])
+
+    intersection = tf.reduce_sum(pred_flat * true_flat, axis=1)
+    cardinality = tf.reduce_sum(pred_flat, axis=1) + tf.reduce_sum(true_flat, axis=1)
+
+    dice = (2.0 * intersection + smooth) / (cardinality + smooth)
+    return tf.reduce_mean(dice)
+
+
+def iou_score(
+    y_true: tf.Tensor,
+    y_pred: tf.Tensor,
+    threshold: Optional[float] = 0.5,
+    smooth: float = 1e-6,
+) -> tf.Tensor:
+    """
+    Intersection over Union (IoU / Jaccard Index) evaluation metric in TensorFlow.
+    """
+    y_true = tf.cast(y_true, tf.float32)
+    if threshold is not None:
+        y_pred = tf.cast(y_pred >= threshold, tf.float32)
+    else:
+        y_pred = tf.cast(y_pred, tf.float32)
+
+    batch_size = tf.shape(y_pred)[0]
+    pred_flat = tf.reshape(y_pred, [batch_size, -1])
+    true_flat = tf.reshape(y_true, [batch_size, -1])
+
+    intersection = tf.reduce_sum(pred_flat * true_flat, axis=1)
+    union = tf.reduce_sum(pred_flat, axis=1) + tf.reduce_sum(true_flat, axis=1) - intersection
+
+    iou = (intersection + smooth) / (union + smooth)
+    return tf.reduce_mean(iou)
+
+
+class AnomalyDetector:
+    """
+    Context manager to monitor Keras models for NaNs or Infs during layer execution.
+    """
+    def __init__(self, model: keras.Model, raise_error: bool = False, **kwargs):
+        self.model = model
+        self.raise_error = raise_error
+        self.anomalies: List[Dict[str, Any]] = []
+        self._orig_calls = {}
+        self.is_active = False
+
+    def attach(self):
+        if self.is_active:
+            return self
+        self.anomalies = []
+        for layer in self.model.layers:
+            orig_call = layer.call
+            self._orig_calls[layer] = orig_call
+
+            def make_call(l_name, l_type, fn):
+                def wrapped_call(*args, **kwargs):
+                    for idx, a in enumerate(args):
+                        if isinstance(a, tf.Tensor) and tf.is_tensor(a):
+                            try:
+                                arr = a.numpy() if hasattr(a, 'numpy') else np.asarray(a)
+                                nan_c = int(np.sum(np.isnan(arr)))
+                                inf_c = int(np.sum(np.isinf(arr)))
+                                if nan_c > 0 or inf_c > 0:
+                                    rec = {
+                                        "stage": "forward_input",
+                                        "layer": l_name,
+                                        "type": l_type,
+                                        "arg_idx": idx,
+                                        "nan_count": nan_c,
+                                        "inf_count": inf_c,
+                                        "shape": tuple(a.shape),
+                                    }
+                                    self.anomalies.append(rec)
+                                    if self.raise_error:
+                                        raise FloatingPointError(f"NaN/Inf detected in {l_name} input: {rec}")
+                            except Exception:
+                                pass
+
+                    out = fn(*args, **kwargs)
+
+                    outs = [out] if isinstance(out, tf.Tensor) else (out if isinstance(out, (list, tuple)) else [])
+                    for idx, o in enumerate(outs):
+                        if isinstance(o, tf.Tensor) and tf.is_tensor(o):
+                            try:
+                                arr = o.numpy() if hasattr(o, 'numpy') else np.asarray(o)
+                                nan_c = int(np.sum(np.isnan(arr)))
+                                inf_c = int(np.sum(np.isinf(arr)))
+                                if nan_c > 0 or inf_c > 0:
+                                    rec = {
+                                        "stage": "forward_output",
+                                        "layer": l_name,
+                                        "type": l_type,
+                                        "arg_idx": idx,
+                                        "nan_count": nan_c,
+                                        "inf_count": inf_c,
+                                        "shape": tuple(o.shape),
+                                    }
+                                    self.anomalies.append(rec)
+                                    if self.raise_error:
+                                        raise FloatingPointError(f"NaN/Inf detected in {l_name} output: {rec}")
+                            except Exception:
+                                pass
+                    return out
+                return wrapped_call
+
+            layer.call = make_call(layer.name, type(layer).__name__, orig_call)
+
+        self.is_active = True
+        return self
+
+    def detach(self):
+        for layer, orig_call in self._orig_calls.items():
+            layer.call = orig_call
+        self._orig_calls.clear()
+        self.is_active = False
+
+    def __enter__(self):
+        return self.attach()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.detach()
+
+    @property
+    def has_anomalies(self) -> bool:
+        return len(self.anomalies) > 0
+
+    def print_report(self):
+        if not self.has_anomalies:
+            print("[AnomalyDetector] No NaN/Inf anomalies detected.")
+            return
+        print(f"\n[AnomalyDetector] Found {len(self.anomalies)} anomaly event(s):")
+        for i, a in enumerate(self.anomalies, 1):
+            print(f"  [{i}] Stage: {a['stage']} | Layer: '{a['layer']}' ({a['type']}) | "
+                  f"Shape: {a['shape']} | NaNs: {a['nan_count']} | Infs: {a['inf_count']}")
+
+
+def check_anomalies(model: keras.Model, sample_input: Any) -> List[Dict[str, Any]]:
+    """
+    Runs a forward pass through Keras model and returns any NaN/Inf anomalies.
+    """
+    with AnomalyDetector(model, raise_error=False) as detector:
+        _ = model(sample_input, training=False)
+    return detector.anomalies
+
+
+# =========================================================================
+# Phase 3: Research Benchmarking & Cross-Framework Weight Transfer
+# =========================================================================
+
+def benchmark_model(
+    model: Any,
+    input_size: Optional[Tuple[int, ...]] = None,
+    input_data: Optional[Any] = None,
+    device: Optional[str] = None,
+    warmup: int = 10,
+    repetition: int = 50,
+    batch_size: int = 1,
+    print_table: bool = True,
+) -> Dict[str, Any]:
+    """
+    Comprehensive performance and complexity benchmark for TensorFlow and PyTorch models.
+    """
+    is_tf_model = isinstance(model, (keras.Model, keras.layers.Layer))
+    is_torch_model = False
+    try:
+        import torch
+        if isinstance(model, torch.nn.Module):
+            is_torch_model = True
+    except ImportError:
+        torch = None
+
+    if not is_torch_model and not is_tf_model:
+        raise TypeError(f"Unsupported model type: {type(model)}")
+
+    # 1. Parameter counting
+    total_params = 0
+    trainable_params = 0
+    param_bytes = 0
+    estimated_macs = 0
+
+    if is_tf_model:
+        total_params = int(sum(np.prod(w.shape) for w in model.weights))
+        trainable_params = int(sum(np.prod(w.shape) for w in model.trainable_weights))
+        non_trainable_params = total_params - trainable_params
+        param_memory_mb = (total_params * 4) / (1024 * 1024)
+        for layer in model.layers:
+            w_c = sum(int(np.prod(w.shape)) for w in layer.weights)
+            if 'conv' in layer.name.lower():
+                estimated_macs += w_c * 14 * 14
+            else:
+                estimated_macs += w_c
+    else:
+        for p in model.parameters():
+            total_params += p.numel()
+            param_bytes += p.numel() * p.element_size()
+            if p.requires_grad:
+                trainable_params += p.numel()
+        non_trainable_params = total_params - trainable_params
+        param_memory_mb = param_bytes / (1024 * 1024)
+        for m in model.modules():
+            if hasattr(m, "weight") and m.weight is not None:
+                if 'Conv' in type(m).__name__:
+                    estimated_macs += m.weight.numel() * 14 * 14
+                elif 'Linear' in type(m).__name__:
+                    estimated_macs += m.weight.numel()
+
+    estimated_flops = estimated_macs * 2
+
+    # 2. Timing
+    target_device = device
+    if is_tf_model:
+        if input_data is not None:
+            x = tf.convert_to_tensor(input_data)
+        elif input_size is not None:
+            shape = (batch_size, *input_size)
+            x = tf.random.normal(shape)
+        else:
+            raise ValueError("Either input_size or input_data must be provided.")
+
+        for _ in range(warmup):
+            _ = model(x, training=False)
+
+        latencies = []
+        for _ in range(repetition):
+            t0 = time.perf_counter()
+            _ = model(x, training=False)
+            t1 = time.perf_counter()
+            latencies.append((t1 - t0) * 1000.0)
+    else:
+        if target_device is None:
+            target_device = "cuda" if torch.cuda.is_available() else "cpu"
+        model_device = torch.device(target_device)
+        model = model.to(model_device)
+        was_train = model.training
+        model.eval()
+
+        if input_data is not None:
+            x = torch.as_tensor(input_data, device=model_device)
+        elif input_size is not None:
+            shape = (batch_size, *input_size)
+            x = torch.randn(*shape, device=model_device)
+        else:
+            raise ValueError("Either input_size or input_data must be provided.")
+
+        with torch.no_grad():
+            for _ in range(warmup):
+                _ = model(x)
+                if target_device == "cuda":
+                    torch.cuda.synchronize()
+
+            latencies = []
+            if target_device == "cuda":
+                for _ in range(repetition):
+                    start_event = torch.cuda.Event(enable_timing=True)
+                    end_event = torch.cuda.Event(enable_timing=True)
+                    start_event.record()
+                    _ = model(x)
+                    end_event.record()
+                    torch.cuda.synchronize()
+                    latencies.append(start_event.elapsed_time(end_event))
+            else:
+                for _ in range(repetition):
+                    t0 = time.perf_counter()
+                    _ = model(x)
+                    t1 = time.perf_counter()
+                    latencies.append((t1 - t0) * 1000.0)
+
+        model.train(was_train)
+
+    lat_arr = np.array(latencies)
+    mean_lat = float(np.mean(lat_arr))
+    std_lat = float(np.std(lat_arr))
+    median_lat = float(np.median(lat_arr))
+    p90_lat = float(np.percentile(lat_arr, 90))
+    p95_lat = float(np.percentile(lat_arr, 95))
+    p99_lat = float(np.percentile(lat_arr, 99))
+    fps = float((batch_size * 1000.0) / mean_lat) if mean_lat > 0 else 0.0
+
+    model_name = getattr(model, "name", None) or getattr(model, "__name__", None) or type(model).__name__
+
+    markdown_table = (
+        f"| Metric | Value |\n"
+        f"|---|---|\n"
+        f"| Model | {model_name} |\n"
+        f"| Total Parameters | {total_params:,} ({total_params/1e6:.2f} M) |\n"
+        f"| Trainable Parameters | {trainable_params:,} |\n"
+        f"| Parameter Memory | {param_memory_mb:.2f} MB |\n"
+        f"| Estimated MACs | {estimated_macs/1e9:.3f} G |\n"
+        f"| Estimated FLOPs | {estimated_flops/1e9:.3f} G |\n"
+        f"| Latency (Mean +/- Std) | {mean_lat:.2f} +/- {std_lat:.2f} ms |\n"
+        f"| Latency (P50 / P95 / P99) | {median_lat:.2f} / {p95_lat:.2f} / {p99_lat:.2f} ms |\n"
+        f"| Throughput | {fps:.1f} FPS (batch={batch_size}) |"
+    )
+
+    latex_table = (
+        r"\begin{table}[h]" "\n"
+        r"\centering" "\n"
+        r"\begin{tabular}{lcccc}" "\n"
+        r"\hline" "\n"
+        r"Model & Params (M) & FLOPs (G) & Latency (ms) & Throughput (FPS) \\" "\n"
+        r"\hline" "\n"
+        f"{model_name} & {total_params/1e6:.2f} & {estimated_flops/1e9:.2f} & {median_lat:.2f} & {fps:.1f} \\\\" "\n"
+        r"\hline" "\n"
+        r"\end{tabular}" "\n"
+        r"\caption{Model Performance and Complexity Benchmark}" "\n"
+        r"\end{table}"
+    )
+
+    if print_table:
+        print("\n" + "=" * 65)
+        print(f"BENCHMARK REPORT: {model_name}")
+        print("=" * 65)
+        print(f"Parameters:     {total_params:,} ({total_params/1e6:.2f}M) [Trainable: {trainable_params:,}]")
+        print(f"Memory:         {param_memory_mb:.2f} MB")
+        print(f"Estimated FLOPs:{estimated_flops/1e9:.3f} G (MACs: {estimated_macs/1e9:.3f} G)")
+        print(f"Latency (mean): {mean_lat:.2f} ms +/- {std_lat:.2f} ms")
+        print(f"Latency (p50):  {median_lat:.2f} ms | p95: {p95_lat:.2f} ms | p99: {p99_lat:.2f} ms")
+        print(f"Throughput:     {fps:.1f} FPS (batch_size={batch_size})")
+        print("=" * 65)
+
+    return {
+        "model_name": model_name,
+        "total_params": total_params,
+        "trainable_params": trainable_params,
+        "non_trainable_params": non_trainable_params,
+        "param_memory_mb": param_memory_mb,
+        "estimated_macs": estimated_macs,
+        "estimated_flops": estimated_flops,
+        "mean_latency_ms": mean_lat,
+        "std_latency_ms": std_lat,
+        "median_latency_ms": median_lat,
+        "p90_latency_ms": p90_lat,
+        "p95_latency_ms": p95_lat,
+        "p99_latency_ms": p99_lat,
+        "fps": fps,
+        "latencies_ms": latencies,
+        "markdown_table": markdown_table,
+        "latex_table": latex_table,
+    }
+
+
+def transfer_weights(
+    source_model: Any,
+    target_model: Any,
+    name_mapping: Optional[Dict[str, str]] = None,
+    strict: bool = False,
+    verbose: bool = True,
+) -> Dict[str, Any]:
+    """
+    Direct in-memory weight transfer between TensorFlow/Keras and PyTorch models.
+    """
+    is_source_torch = False
+    is_target_torch = False
+    try:
+        import torch
+        if isinstance(source_model, torch.nn.Module):
+            is_source_torch = True
+        if isinstance(target_model, torch.nn.Module):
+            is_target_torch = True
+    except ImportError:
+        torch = None
+
+    source_items = []
+    if is_source_torch:
+        for name, mod in source_model.named_modules():
+            m_type = type(mod).__name__
+            if 'Conv' in m_type:
+                source_items.append({
+                    "name": name,
+                    "type": "conv",
+                    "weight": mod.weight.detach().cpu().numpy(),
+                    "bias": mod.bias.detach().cpu().numpy() if mod.bias is not None else None,
+                })
+            elif 'Linear' in m_type:
+                source_items.append({
+                    "name": name,
+                    "type": "linear",
+                    "weight": mod.weight.detach().cpu().numpy(),
+                    "bias": mod.bias.detach().cpu().numpy() if mod.bias is not None else None,
+                })
+            elif 'BatchNorm' in m_type:
+                source_items.append({
+                    "name": name,
+                    "type": "bn",
+                    "weight": mod.weight.detach().cpu().numpy() if mod.weight is not None else None,
+                    "bias": mod.bias.detach().cpu().numpy() if mod.bias is not None else None,
+                    "running_mean": mod.running_mean.detach().cpu().numpy() if mod.running_mean is not None else None,
+                    "running_var": mod.running_var.detach().cpu().numpy() if mod.running_var is not None else None,
+                })
+    else:
+        for layer in source_model.layers:
+            l_type = type(layer).__name__.lower()
+            if "conv" in l_type and len(layer.weights) > 0:
+                weights = layer.get_weights()
+                source_items.append({
+                    "name": layer.name,
+                    "type": "conv",
+                    "weight": weights[0],
+                    "bias": weights[1] if len(weights) > 1 else None,
+                })
+            elif "dense" in l_type and len(layer.weights) > 0:
+                weights = layer.get_weights()
+                source_items.append({
+                    "name": layer.name,
+                    "type": "linear",
+                    "weight": weights[0],
+                    "bias": weights[1] if len(weights) > 1 else None,
+                })
+            elif ("bn" in l_type or "batchnorm" in l_type or "batch_norm" in l_type) and len(layer.weights) > 0:
+                weights = layer.get_weights()
+                source_items.append({
+                    "name": layer.name,
+                    "type": "bn",
+                    "weight": weights[0] if len(weights) > 0 else None,
+                    "bias": weights[1] if len(weights) > 1 else None,
+                    "running_mean": weights[2] if len(weights) > 2 else None,
+                    "running_var": weights[3] if len(weights) > 3 else None,
+                })
+
+    target_items = []
+    if is_target_torch:
+        for name, mod in target_model.named_modules():
+            m_type = type(mod).__name__
+            if 'Conv' in m_type:
+                target_items.append({"name": name, "type": "conv", "obj": mod})
+            elif 'Linear' in m_type:
+                target_items.append({"name": name, "type": "linear", "obj": mod})
+            elif 'BatchNorm' in m_type:
+                target_items.append({"name": name, "type": "bn", "obj": mod})
+    else:
+        for layer in target_model.layers:
+            l_type = type(layer).__name__.lower()
+            if "conv" in l_type and len(layer.weights) > 0:
+                target_items.append({"name": layer.name, "type": "conv", "obj": layer})
+            elif "dense" in l_type and len(layer.weights) > 0:
+                target_items.append({"name": layer.name, "type": "linear", "obj": layer})
+            elif ("bn" in l_type or "batchnorm" in l_type or "batch_norm" in l_type) and len(layer.weights) > 0:
+                target_items.append({"name": layer.name, "type": "bn", "obj": layer})
+
+    transferred_count = 0
+    matched_pairs = []
+    unmatched_src = [s["name"] for s in source_items]
+    unmatched_tgt = [t["name"] for t in target_items]
+
+    pairs_to_transfer = []
+    if name_mapping:
+        for s in source_items:
+            tgt_name = name_mapping.get(s["name"])
+            if tgt_name:
+                for t in target_items:
+                    if t["name"] == tgt_name:
+                        pairs_to_transfer.append((s, t))
+                        break
+    else:
+        s_idx = 0
+        t_idx = 0
+        while s_idx < len(source_items) and t_idx < len(target_items):
+            s = source_items[s_idx]
+            t = target_items[t_idx]
+            if s["type"] == t["type"]:
+                pairs_to_transfer.append((s, t))
+                s_idx += 1
+                t_idx += 1
+            elif s_idx < t_idx:
+                s_idx += 1
+            else:
+                t_idx += 1
+
+    for s, t in pairs_to_transfer:
+        s_w = s["weight"]
+        s_b = s["bias"]
+        s_type = s["type"]
+
+        if is_source_torch and not is_target_torch:
+            # PyTorch -> TensorFlow
+            if s_type == "conv":
+                if s_w.ndim == 4:
+                    w_tf = np.transpose(s_w, (2, 3, 1, 0))
+                elif s_w.ndim == 3:
+                    w_tf = np.transpose(s_w, (2, 1, 0))
+                else:
+                    w_tf = s_w
+                weights_to_set = [w_tf]
+                if s_b is not None:
+                    weights_to_set.append(s_b)
+                t["obj"].set_weights(weights_to_set)
+                transferred_count += w_tf.size + (s_b.size if s_b is not None else 0)
+
+            elif s_type == "linear":
+                w_tf = np.transpose(s_w, (1, 0))
+                weights_to_set = [w_tf]
+                if s_b is not None:
+                    weights_to_set.append(s_b)
+                t["obj"].set_weights(weights_to_set)
+                transferred_count += w_tf.size + (s_b.size if s_b is not None else 0)
+
+            elif s_type == "bn":
+                weights_to_set = [s["weight"], s["bias"], s["running_mean"], s["running_var"]]
+                valid_weights = [w for w in weights_to_set if w is not None]
+                t["obj"].set_weights(valid_weights)
+                transferred_count += sum(w.size for w in valid_weights)
+
+        elif not is_source_torch and is_target_torch:
+            # TensorFlow -> PyTorch
+            if s_type == "conv":
+                if s_w.ndim == 4:
+                    w_th = np.transpose(s_w, (3, 2, 0, 1))
+                elif s_w.ndim == 3:
+                    w_th = np.transpose(s_w, (2, 1, 0))
+                else:
+                    w_th = s_w
+                with torch.no_grad():
+                    t["obj"].weight.copy_(torch.from_numpy(w_th))
+                    if s_b is not None and t["obj"].bias is not None:
+                        t["obj"].bias.copy_(torch.from_numpy(s_b))
+                transferred_count += w_th.size + (s_b.size if s_b is not None else 0)
+
+            elif s_type == "linear":
+                w_th = np.transpose(s_w, (1, 0))
+                with torch.no_grad():
+                    t["obj"].weight.copy_(torch.from_numpy(w_th))
+                    if s_b is not None and t["obj"].bias is not None:
+                        t["obj"].bias.copy_(torch.from_numpy(s_b))
+                transferred_count += w_th.size + (s_b.size if s_b is not None else 0)
+
+            elif s_type == "bn":
+                with torch.no_grad():
+                    if s["weight"] is not None and t["obj"].weight is not None:
+                        t["obj"].weight.copy_(torch.from_numpy(s["weight"]))
+                    if s["bias"] is not None and t["obj"].bias is not None:
+                        t["obj"].bias.copy_(torch.from_numpy(s["bias"]))
+                    if s["running_mean"] is not None and t["obj"].running_mean is not None:
+                        t["obj"].running_mean.copy_(torch.from_numpy(s["running_mean"]))
+                    if s["running_var"] is not None and t["obj"].running_var is not None:
+                        t["obj"].running_var.copy_(torch.from_numpy(s["running_var"]))
+                transferred_count += sum(w.size for w in [s["weight"], s["bias"], s["running_mean"], s["running_var"]] if w is not None)
+
+        else:
+            if is_target_torch:
+                with torch.no_grad():
+                    t["obj"].weight.copy_(torch.from_numpy(s_w))
+                    if s_b is not None and t["obj"].bias is not None:
+                        t["obj"].bias.copy_(torch.from_numpy(s_b))
+            else:
+                t["obj"].set_weights([s_w] + ([s_b] if s_b is not None else []))
+            transferred_count += s_w.size + (s_b.size if s_b is not None else 0)
+
+        matched_pairs.append((s["name"], t["name"]))
+        if s["name"] in unmatched_src:
+            unmatched_src.remove(s["name"])
+        if t["name"] in unmatched_tgt:
+            unmatched_tgt.remove(t["name"])
+
+    if strict and (unmatched_src or unmatched_tgt):
+        raise ValueError(f"Strict transfer failed. Unmatched source: {unmatched_src}, Unmatched target: {unmatched_tgt}")
+
+    if verbose:
+        print(f"[ToTf.transfer_weights] Transferred {len(matched_pairs)} layers ({transferred_count:,} parameters).")
+        for s_n, t_n in matched_pairs:
+            print(f"  {s_n} -> {t_n}")
+
+    return {
+        "transferred_parameters": transferred_count,
+        "transferred_layers": len(matched_pairs),
+        "matched_pairs": matched_pairs,
+        "unmatched_source": unmatched_src,
+        "unmatched_target": unmatched_tgt,
+    }

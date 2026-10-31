@@ -67,6 +67,31 @@ Framework-agnostic "missing" functions that save time and improve code quality:
 - **`freeze_batchnorm(model, freeze_eval=True)`** - Lock BatchNorm affine parameters and freeze running statistics (eval mode) during fine-tuning.
 - **Use case**: Effortless backbone freezing and transfer learning across both frameworks.
 
+#### Focal Loss for Class Imbalance
+- **`loss_focal(y_true, y_pred, alpha=0.25, gamma=2.0)`** - Focal loss function for addressing extreme class imbalance in object detection and dense classification.
+- **`FocalLoss(alpha=0.25, gamma=2.0)`** - PyTorch and Keras-compatible Focal Loss class.
+- **Use case**: One-stage detectors, fraud/rare disease detection where easy negatives overwhelm the gradients.
+
+#### Dice Loss & IoU Segmentation Metrics
+- **`loss_dice(y_true, y_pred, smooth=1e-6)`** - Soft Dice loss for image segmentation.
+- **`DiceLoss(smooth=1e-6)`** - PyTorch and Keras-compatible Dice Loss class.
+- **`dice_score(y_true, y_pred)`** / **`iou_score(y_true, y_pred)`** - Fast Dice Similarity Coefficient and Jaccard Index metrics.
+- **Use case**: Biomedical and satellite image segmentation with foreground-background class imbalance.
+
+#### Numerical Anomaly Tracking (First-NaN / Inf Pinpointing)
+- **`AnomalyDetector(model, check_inputs=True, check_outputs=True, check_gradients=True)`** - Non-intrusive hook monitor that intercepts the exact layer and tensor where NaN or Inf first originates.
+- **`check_anomalies(tensor, name=None)`** - Quick boolean assertion check for tensors.
+- **Use case**: Instantly identifies exploding gradients, numerical instability, or invalid layer inputs without hours of manual debugging.
+
+#### Publication-Ready Model Profiling & Benchmarking
+- **`benchmark_model(model, input_shape=..., num_runs=50, warmup=10)`** - Complete model complexity profiler calculating total/trainable params, memory (MB), estimated FLOPs & MACs, latency percentiles (mean, std, p50, p95, p99), throughput (FPS), plus ready-to-paste **Markdown** and **LaTeX** tables.
+- **Use case**: Generate camera-ready complexity and performance tables for research papers, GitHub READMEs, and technical reports.
+
+#### Direct In-Memory Weight Transfer (PyTorch <-> TensorFlow)
+- **`transfer_weights(source_model, target_model, layer_mapping=None, verbose=True)`** - Direct zero-disk-overhead in-memory weight mapper between PyTorch and TensorFlow/Keras models.
+- **Automated features**: Automatically handles spatial weight transpositions (PyTorch `[out, in, H, W]` vs Keras `[H, W, in, out]`), Linear/Dense transpositions (`[out, in]` vs `[in, out]`), and aligns BatchNorm gamma, beta, mean, and var.
+- **Use case**: Instant cross-framework model porting, rapid paper replication, and comparing inference speeds between PyTorch and TensorFlow without cumbersome ONNX exports.
+
 ### 📊 ModelView (PyTorch & TensorFlow)
 Publication-quality neural network architecture diagrams for both frameworks:
 - **PyTorch support** - Wraps torchview for comprehensive PyTorch model visualization
@@ -1037,6 +1062,210 @@ best_lr = lr_finder.get_best_lr()
 
 ---
 
+### Cross-Framework Reproducibility (`seed_everything`)
+
+**Problem**: Achieving full determinism and reproducibility across PyTorch, TensorFlow, NumPy, and Python usually requires 10+ lines of framework-specific boilerplate, device flags, and cuBLAS configurations.
+
+**Solution**: `seed_everything()` configures all random number generators, backend states, and hardware determinism flags in a single call.
+
+```python
+from ToTf import seed_everything
+
+# Basic reproducible seeding (Python, NumPy, PyTorch CPU/CUDA, TensorFlow)
+seed_everything(42)
+
+# Strict deterministic execution for scientific benchmarking
+seed_everything(42, deterministic=True, verbose=True)
+```
+
+---
+
+### Tensor Health & Diagnostics (`inspect_tensor`)
+
+**Problem**: When debugging unexpected model outputs, vanishing gradients, or shape mismatches, printing a tensor only displays raw numbers or truncated floats, requiring multiple manual `.shape`, `.dtype`, `torch.isnan()`, `.mean()`, and `.std()` calls.
+
+**Solution**: `inspect_tensor()` provides a comprehensive one-line diagnostic health profile for PyTorch, TensorFlow, and NumPy tensors.
+
+```python
+from ToTf import inspect_tensor
+import torch
+
+x = torch.randn(32, 64, 128)
+stats = inspect_tensor(x, name="encoder_activations")
+```
+
+**Output:**
+```
+======================================================================
+[TENSOR HEALTH CHECK] 'encoder_activations'
+======================================================================
+Framework:   PyTorch
+Shape:       (32, 64, 128)
+Dtype:       torch.float32
+Device:      cpu
+Memory:      1.000 MB
+Elements:    262,144
+NaNs:        0 (0.0000%) [OK]
+Infs:        0 (0.0000%) [OK]
+Zeros:       0 (0.0000%)
+Min / Max:   -4.521849 / 4.678121
+Mean / Std:  -0.000142 / 0.999812
+Quantiles:   p25=-0.674912, p50=0.000185, p75=0.674391
+======================================================================
+```
+
+---
+
+### Transfer Learning & Fine-Tuning Toolkit
+
+**Problem**: Freezing backbones or fine-tuning heads in PyTorch requires navigating parameter generators and setting `param.requires_grad = False`. In TensorFlow/Keras, it requires setting `layer.trainable = False`. Furthermore, PyTorch `BatchNorm` layers continue updating running mean and variance in `.train()` mode even if affine parameters are frozen!
+
+**Solution**: Framework-agnostic `freeze_layers()`, `unfreeze_layers()`, and `freeze_batchnorm()`.
+
+```python
+from ToTf import freeze_layers, unfreeze_layers, freeze_batchnorm
+
+# Freeze backbone layers up to index 8, or matching a name pattern
+freeze_layers(model, up_to=8)
+freeze_layers(model, regex=r"(conv|block[1-3])")
+
+# Unfreeze only the final classifier head
+unfreeze_layers(model, last_n=1)
+
+# Lock BatchNorm weights AND running statistics during fine-tuning
+freeze_batchnorm(model, freeze_eval=True)
+```
+
+---
+
+### Focal Loss for Class Imbalance
+
+**Problem**: Standard Cross-Entropy is overwhelmed by vast numbers of easily classified background/negative examples in tasks like object detection, anomaly detection, or medical triage.
+
+**Solution**: `loss_focal()` and `FocalLoss` dynamically scale the cross-entropy loss, down-weighting easy examples to focus gradient updates on hard, confusing examples.
+
+```python
+from ToTf import loss_focal, FocalLoss
+
+# Functional usage
+loss = loss_focal(y_true, y_pred, alpha=0.25, gamma=2.0)
+
+# PyTorch Module / Keras Loss Layer usage
+criterion = FocalLoss(alpha=0.25, gamma=2.0)
+loss = criterion(y_true, y_pred)
+```
+
+---
+
+### Dice Loss & Segmentation Metrics
+
+**Problem**: Pixel-wise cross-entropy struggles with severe foreground-background imbalance in semantic/biomedical segmentation (e.g. small tumors or lesions covering <1% of the image).
+
+**Solution**: Differentiable soft `loss_dice()` / `DiceLoss`, alongside `dice_score()` and `iou_score()` (Jaccard Index) evaluation metrics.
+
+```python
+from ToTf import loss_dice, DiceLoss, dice_score, iou_score
+
+# Differentiable loss for backpropagation
+loss = loss_dice(masks_true, masks_pred, smooth=1e-6)
+
+# Validation evaluation metrics
+dsc = dice_score(masks_true, masks_pred)  # Dice Similarity Coefficient
+iou = iou_score(masks_true, masks_pred)   # Jaccard Index (IoU)
+print(f"Validation Dice: {dsc:.4f} | IoU: {iou:.4f}")
+```
+
+---
+
+### Numerical Anomaly Tracking (`AnomalyDetector`)
+
+**Problem**: When NaN or Inf values appear in a deep network, PyTorch and TensorFlow typically do not fail until the loss or backward pass diverges, leaving you with zero visibility into which layer or tensor first went unstable.
+
+**Solution**: `AnomalyDetector` attaches non-intrusive hooks to all layers, recording the exact layer name, stage (input, output, or backward gradient), tensor shape, and NaN/Inf count where instability first occurs.
+
+```python
+from ToTf import AnomalyDetector, check_anomalies
+
+# Fast single-tensor check
+has_anomaly = check_anomalies(tensor, name="latent_embedding")
+
+# Deep layer-by-layer anomaly interceptor
+detector = AnomalyDetector(model, check_inputs=True, check_outputs=True, check_gradients=True)
+
+# Run forward & backward passes normally
+output = model(inputs)
+loss = criterion(output, targets)
+loss.backward()
+
+# Inspect any detected anomalies
+if detector.has_anomalies():
+    print(detector.summary())
+    for anomaly in detector.anomalies:
+        print(f"Layer '{anomaly['layer_name']}' failed at {anomaly['stage']} with {anomaly['nan_count']} NaNs!")
+
+# Clean up hooks after debugging
+detector.remove_hooks()
+```
+
+---
+
+### Publication-Ready Model Profiling (`benchmark_model`)
+
+**Problem**: Writing research papers and technical documentation requires reporting parameter counts, memory footprint, FLOPs/MACs, latency percentiles, and throughput. Setting up CUDA warmup, timing loops, percentiles, and converting results into Markdown and LaTeX tables is repetitive and error-prone.
+
+**Solution**: `benchmark_model()` benchmarks models with warmup, calculates parameter and computational complexity, and outputs copy-paste ready Markdown and LaTeX tables.
+
+```python
+from ToTf import benchmark_model
+
+report = benchmark_model(
+    model,
+    input_shape=(8, 3, 64, 64),
+    num_runs=50,
+    warmup=10,
+    device="cpu",      # or 'cuda'
+    print_table=True
+)
+
+# Access computed metrics
+print(f"FLOPs: {report['flops_g']:.3f} G | Throughput: {report['fps']:.1f} FPS")
+
+# Camera-ready LaTeX table for Overleaf / paper submission:
+print(report['latex_table'])
+
+# Markdown table for GitHub / Notion documentation:
+print(report['markdown_table'])
+```
+
+---
+
+### Direct In-Memory Weight Transfer (`transfer_weights`)
+
+**Problem**: Porting a trained PyTorch model to TensorFlow/Keras (or vice-versa) usually requires saving to ONNX, writing custom conversion scripts, or manually transposing convolution weights and mapping BatchNorm parameters.
+
+**Solution**: `transfer_weights()` transfers compatible parameters directly in-memory between PyTorch and TensorFlow models without disk I/O, automatically handling convolution kernel transpositions (`[out, in, H, W]` vs `[H, W, in, out]`), dense layer transpositions (`[out, in]` vs `[in, out]`), and aligning BatchNorm weights, biases, running means, and running variances.
+
+```python
+from ToTf import transfer_weights
+
+# PyTorch -> TensorFlow / Keras
+transfer_weights(torch_model, keras_model, verbose=True)
+
+# TensorFlow / Keras -> PyTorch
+transfer_weights(keras_model, torch_model, verbose=True)
+
+# Optional custom layer name mapping for non-sequential architectures:
+transfer_weights(
+    source_model,
+    target_model,
+    layer_mapping={"resnet_conv1": "features.0", "classifier": "head"}
+)
+```
+
+---
+
+---
+
 ## API Reference
 
 ### TrainingMonitor
@@ -1255,6 +1484,152 @@ LRFinder(model, loss_fn, optimizer=None)
 
 ---
 
+#### seed_everything
+
+```python
+seed_everything(seed: int = 42, deterministic: bool = False, benchmark: bool = False, verbose: bool = False)
+```
+
+**Parameters:**
+- `seed` (int): Master seed value (default: 42).
+- `deterministic` (bool): Enable deterministic algorithms across PyTorch & TensorFlow (may impact performance).
+- `benchmark` (bool): PyTorch cuDNN benchmark setting.
+- `verbose` (bool): Print seeding confirmation status.
+
+---
+
+#### inspect_tensor
+
+```python
+inspect_tensor(tensor: Any, name: Optional[str] = None, print_info: bool = True, quantiles: bool = True) -> Dict[str, Any]
+```
+
+**Parameters:**
+- `tensor`: Input PyTorch tensor, TensorFlow tensor, or NumPy array.
+- `name` (str, optional): Custom display name for debugging.
+- `print_info` (bool): Print formatted summary table to console.
+- `quantiles` (bool): Compute 25th, 50th (median), and 75th percentiles.
+
+**Returns:** Dictionary with keys `shape`, `dtype`, `device`, `numel`, `memory_mb`, `has_nan`, `nan_count`, `has_inf`, `inf_count`, `zero_pct`, `min`, `max`, `mean`, `std`, and optional `quantiles`.
+
+---
+
+#### freeze_layers / unfreeze_layers / freeze_batchnorm
+
+```python
+freeze_layers(model: Any, up_to: Optional[int] = None, layer_names: Optional[List[str]] = None, layer_types: Optional[Tuple[Type, ...]] = None, regex: Optional[str] = None) -> int
+
+unfreeze_layers(model: Any, last_n: Optional[int] = None, layer_names: Optional[List[str]] = None, layer_types: Optional[Tuple[Type, ...]] = None, regex: Optional[str] = None) -> int
+
+freeze_batchnorm(model: Any, freeze_eval: bool = True) -> int
+```
+
+**Parameters:**
+- `model`: PyTorch `nn.Module` or TensorFlow `tf.keras.Model`.
+- `up_to`: Index up to which layers should be frozen (exclusive).
+- `last_n`: Count of trailing layers to unfreeze.
+- `layer_names`: Explicit list of layer names to match.
+- `layer_types`: Tuple of layer classes/types to match (e.g. `(nn.Conv2d, nn.Linear)`).
+- `regex`: Regex pattern matching layer names.
+- `freeze_eval` (bool): For PyTorch, force BatchNorm modules into eval mode and prevent running statistics from updating.
+
+**Returns:** Count of modified layers/parameters.
+
+---
+
+#### loss_focal / FocalLoss
+
+```python
+loss_focal(y_true: Any, y_pred: Any, alpha: float = 0.25, gamma: float = 2.0, reduction: str = 'mean') -> Any
+
+FocalLoss(alpha: float = 0.25, gamma: float = 2.0, reduction: str = 'mean')
+```
+
+**Parameters:**
+- `alpha` (float): Weighting factor for rare/positive class (default: 0.25).
+- `gamma` (float): Focusing parameter for hard examples (default: 2.0).
+- `reduction` (str): `'mean'`, `'sum'`, or `'none'` (default: `'mean'`).
+
+---
+
+#### loss_dice / DiceLoss / dice_score / iou_score
+
+```python
+loss_dice(y_true: Any, y_pred: Any, smooth: float = 1e-6) -> Any
+DiceLoss(smooth: float = 1e-6)
+
+dice_score(y_true: Any, y_pred: Any, smooth: float = 1e-6) -> float
+iou_score(y_true: Any, y_pred: Any, smooth: float = 1e-6) -> float
+```
+
+**Parameters:**
+- `y_true`, `y_pred`: Ground truth masks and predicted probability/activation masks.
+- `smooth` (float): Smoothing epsilon to prevent division by zero (default: 1e-6).
+
+---
+
+#### AnomalyDetector / check_anomalies
+
+```python
+check_anomalies(tensor: Any, name: Optional[str] = None) -> bool
+
+AnomalyDetector(model: Any, check_inputs: bool = True, check_outputs: bool = True, check_gradients: bool = True)
+```
+
+**Methods:**
+- `has_anomalies() -> bool`: Returns True if any NaN or Inf was captured.
+- `summary() -> str`: Formatted report of all anomalies encountered.
+- `reset()`: Clear captured anomaly history.
+- `remove_hooks()`: Detach all hooks from the model.
+
+---
+
+#### benchmark_model
+
+```python
+benchmark_model(
+    model: Any,
+    input_shape: Tuple[int, ...],
+    num_runs: int = 50,
+    warmup: int = 10,
+    device: str = 'cpu',
+    print_table: bool = True
+) -> Dict[str, Any]
+```
+
+**Parameters:**
+- `model`: PyTorch `nn.Module` or TensorFlow `tf.keras.Model`.
+- `input_shape`: Input tensor shape including or excluding batch (e.g. `(8, 3, 224, 224)`).
+- `num_runs` (int): Timed evaluation runs (default: 50).
+- `warmup` (int): Untimed warmup iterations to initialize caches/CUDA kernels (default: 10).
+- `device` (str): `'cpu'` or `'cuda'` (default: `'cpu'`).
+- `print_table` (bool): Pretty-print console summary.
+
+**Returns:** Dictionary with `total_params`, `trainable_params`, `param_memory_mb`, `macs`, `flops`, `latency_mean_ms`, `latency_std_ms`, `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `fps`, `markdown_table`, and `latex_table`.
+
+---
+
+#### transfer_weights
+
+```python
+transfer_weights(
+    source_model: Any,
+    target_model: Any,
+    layer_mapping: Optional[Dict[str, str]] = None,
+    verbose: bool = True
+) -> Dict[str, int]
+```
+
+**Parameters:**
+- `source_model`: Source model (PyTorch `nn.Module` or TensorFlow `tf.keras.Model`).
+- `target_model`: Target model (PyTorch `nn.Module` or TensorFlow `tf.keras.Model`).
+- `layer_mapping` (dict, optional): Custom mapping from source layer names to target layer names.
+- `verbose` (bool): Print layer mapping and transfer details.
+
+**Returns:** Dictionary with `transferred_layers` and `transferred_params` counts.
+
+---
+
 ## Comparison with Alternatives
 
 ### SmartSummary vs Other Tools
@@ -1286,6 +1661,11 @@ LRFinder(model, loss_fn, optimizer=None)
 - [example_smartsummary_tf.py](example_smartsummary_tf.py) - SmartSummary examples for TensorFlow/Keras (8 detailed scenarios including multi-input models, gradient tracking, and MobileNetV2 analysis)
 - [example_utils_tf.py](example_utils_tf.py) - Utility functions examples (6 scenarios: lazy_flatten, NCC loss with Keras, LR finder, Functional API usage)
 
+### Cross-Framework & Research Examples
+- [examples/example_phase1_qol.py](examples/example_phase1_qol.py) - Phase 1: Cross-framework seeding, tensor health check, layer and BatchNorm freezing
+- [examples/example_phase2_diagnostics_losses.py](examples/example_phase2_diagnostics_losses.py) - Phase 2: Focal Loss, Dice Loss & IoU metrics, and AnomalyDetector for pinpointing first-NaN/Inf origins
+- [examples/example_phase3_benchmarking_transfer.py](examples/example_phase3_benchmarking_transfer.py) - Phase 3: Paper-ready benchmark profiling (FLOPs/latency/Markdown/LaTeX tables) and direct in-memory PyTorch <-> TensorFlow weight transfer
+
 ---
 
 ## Testing
@@ -1293,24 +1673,18 @@ LRFinder(model, loss_fn, optimizer=None)
 Run the test suites to verify everything works:
 
 ```bash
-# Test TrainingMonitor (PyTorch)
-python test/test_monitor.py
-python test/test_integration.py
+# Test Phase 1 Quality-of-Life & Transfer Learning Utilities
+pytest test/test_phase1_utils.py -v
 
-# Test SmartSummary (PyTorch)
-python test/test_smartsummary.py
+# Test Phase 2 Advanced Diagnostics & Losses
+pytest test/test_phase2_utils.py -v
 
-# Test SmartSummary (TensorFlow)
-python test/test_smartsummary_tf.py
+# Test Phase 3 Benchmarking & Weight Transfer
+pytest test/test_phase3_utils.py -v
 
-# Test Utility Functions (PyTorch)
-python test/test_utils_pytorch.py
-
-# Test Utility Functions (TensorFlow)
-python test/test_utils_tf.py
-
-# Test Cross-Framework Integration
-python test/test_utils_integration.py
+# Run full test suite across all modules (119+ tests)
+pytest test/ -v
+```
 
 ---
 
@@ -1331,6 +1705,7 @@ print(get_backend())  # Returns 'torch' or 'tensorflow'
 ToTf/
 ├── __init__.py                     # Package exports with auto backend detection
 ├── backend.py                      # Backend detection (PyTorch/TensorFlow)
+├── backend_manager.py              # Dynamic component dispatching & registration
 ├── requirements.txt                # Dependencies
 ├── setup.py                        # Package config
 │
@@ -1345,32 +1720,36 @@ ToTf/
 │   ├── __init__.py
 │   ├── trainingmonitor.py         # TrainingMonitor implementation
 │   ├── smartsummary.py            # SmartSummary implementation (PyTorch)
-│   └── utils.py                   # Utility functions (lazy_flatten, NCC loss, LR finder)
+│   └── utils.py                   # Utilities (seed, inspect, freeze, focal, dice, anomaly, benchmark, transfer)
 │
 ├── tenf/
 │   ├── __init__.py
 │   ├── smartsummary.py            # SmartSummary implementation (TensorFlow)
-│   ├── modelview.py               # ModelView for architecture diagrams (NEW!)
-│   └── utils.py                   # Utility functions (lazy_flatten, NCC loss, LR finder)
+│   ├── modelview.py               # ModelView for architecture diagrams
+│   └── utils.py                   # Utilities (seed, inspect, freeze, focal, dice, anomaly, benchmark, transfer)
 │
-├── Examples/
+├── examples/
 │   ├── example_usage.py           # TrainingMonitor examples
 │   ├── example_smartsummary.py    # SmartSummary examples (PyTorch)
 │   ├── example_smartsummary_tf.py # SmartSummary examples (TensorFlow)
 │   ├── example_modelview_tf.py    # ModelView examples (8+ examples)
-│   ├── demo_complex_architectures.py # Complex architecture demos (5 examples) (NEW!)
-│   ├── example_utils_pytorch.py   # Utility functions examples (PyTorch)
-│   └── example_utils_tf.py        # Utility functions examples (TensorFlow)
+│   ├── example_phase1_qol.py      # Seeding, inspect_tensor, layer & BN freezing
+│   ├── example_phase2_diagnostics_losses.py # Focal loss, Dice, IoU, AnomalyDetector
+│   ├── example_phase3_benchmarking_transfer.py # Model benchmarking & weight transfer
+│   └── demo_complex_architectures.py # Complex architecture demos
 │
 ├── test/
 │   ├── test_monitor.py            # TrainingMonitor tests
 │   ├── test_integration.py        # Integration tests
 │   ├── test_smartsummary.py       # SmartSummary tests (PyTorch)
 │   ├── test_smartsummary_tf.py    # SmartSummary tests (TensorFlow)
-│   ├── test_modelview_tf.py       # ModelView tests (41 tests, 9 classes) (NEW!)
+│   ├── test_modelview_tf.py       # ModelView tests (41 tests, 9 classes)
 │   ├── test_utils_pytorch.py      # Utility functions tests (PyTorch)
 │   ├── test_utils_tf.py           # Utility functions tests (TensorFlow)
-│   └── test_utils_integration.py  # Cross-framework integration tests
+│   ├── test_utils_integration.py  # Cross-framework integration tests
+│   ├── test_phase1_utils.py       # Phase 1 tests (19 tests)
+│   ├── test_phase2_utils.py       # Phase 2 tests (6 tests)
+│   └── test_phase3_utils.py       # Phase 3 tests (4 tests)
 │
 └── verify_modelview.py            # Quick ModelView verification script
 ```
@@ -1390,16 +1769,21 @@ Contributions are welcome! Please ensure all tests pass before submitting PRs.
 ```bash
 # Run all tests
 pytest test/ -v
-
-# Run specific test suites
-pytest test/test_modelview_tf.py -v      # ModelView tests (32 tests)
-pytest test/test_smartsummary_tf.py -v   # SmartSummary tests
-pytest test/test_utils_tf.py -v          # Utilities tests
 ```
 
 ---
 
 ## What's New
+
+**v0.3.0 - Research & Production Deep Learning Toolkit (Phases 1, 2, & 3)** 🚀
+- ✅ **Cross-Framework Reproducibility**: `seed_everything()` sets unified seeds, determinism flags, and hardware workspace configs for Python, NumPy, PyTorch (CPU/CUDA), and TensorFlow.
+- ✅ **Tensor Health & Diagnostics**: `inspect_tensor()` provides instant one-line profiling (shape, dtype, memory, NaNs, Infs, zero sparsity, quantiles).
+- ✅ **Transfer Learning Toolkit**: `freeze_layers()`, `unfreeze_layers()`, and `freeze_batchnorm()` for seamless backbone locking across PyTorch and Keras.
+- ✅ **Focal Loss**: `loss_focal()` and `FocalLoss` for imbalanced dense classification and object detection.
+- ✅ **Dice Loss & IoU**: `loss_dice()`, `DiceLoss`, `dice_score()`, and `iou_score()` for segmentation tasks.
+- ✅ **First-NaN/Inf Anomaly Interceptor**: `AnomalyDetector` and `check_anomalies()` track exactly which layer and forward/backward stage first produces numerical instability.
+- ✅ **Camera-Ready Model Benchmarking**: `benchmark_model()` measures FLOPs, MACs, latency percentiles (p50, p95, p99), and throughput (FPS), auto-generating ready-to-publish Markdown and LaTeX tables.
+- ✅ **Direct In-Memory Weight Transfer**: `transfer_weights()` transfers weights between PyTorch and TensorFlow/Keras without disk I/O or ONNX overhead, automatically handling 2D conv kernel and dense weight matrix transpositions.
 
 **v0.2.3 ONNX Support**
 - ✅ **toONNX** and **fromONNX** have been added to support ONNX
