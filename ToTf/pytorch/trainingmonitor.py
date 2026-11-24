@@ -72,6 +72,14 @@ class TrainingMonitor:
         res = {"RAM": psutil.virtual_memory().percent, "VRAM": 0.0}
         if torch.cuda.is_available():
             res["VRAM"] = round(torch.cuda.memory_reserved() / (1024**3), 2)
+        elif hasattr(torch, "mps") and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            try:
+                if hasattr(torch.mps, "current_allocated_memory"):
+                    res["VRAM"] = round(torch.mps.current_allocated_memory() / (1024**3), 2)
+                elif hasattr(torch.mps, "driver_allocated_memory"):
+                    res["VRAM"] = round(torch.mps.driver_allocated_memory() / (1024**3), 2)
+            except Exception:
+                pass
         return res
 
     def _refresh_display(self):

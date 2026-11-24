@@ -1682,20 +1682,41 @@ pytest test/test_phase2_utils.py -v
 # Test Phase 3 Benchmarking & Weight Transfer
 pytest test/test_phase3_utils.py -v
 
-# Run full test suite across all modules (119+ tests)
+# Test Apple Metal / MPS Compatibility
+pytest test/test_mps_compatibility.py -v
+
+# Run full test suite across all modules (127+ tests)
 pytest test/ -v
 ```
 
 ---
 
-## Backend Detection
+## Backend & Hardware Acceleration Detection
 
-ToTf automatically detects whether PyTorch or TensorFlow is installed:
+ToTf automatically detects your installed frameworks and optimal hardware acceleration (NVIDIA CUDA or Apple Silicon Metal / MPS):
 
 ```python
-from ToTf import get_backend
-print(get_backend())  # Returns 'torch' or 'tensorflow'
+from ToTf import get_backend, is_mps_available, is_cuda_available, get_device
+
+# Check installed backend ('torch' or 'tensorflow')
+backend = get_backend()
+
+# Hardware acceleration checks
+has_apple_metal = is_mps_available()  # True on Apple Silicon Mac (M1/M2/M3/M4)
+has_cuda = is_cuda_available()        # True if NVIDIA GPU available
+
+# Resolve optimal device ('cuda' -> 'mps' -> 'cpu')
+device = get_device()                 # e.g., 'mps' on Mac, 'cuda' on GPU server, 'cpu' otherwise
 ```
+
+### 🍎 Apple Silicon Metal (MPS) Compatibility
+All core tools and utilities in ToTf are fully compatible with Apple Silicon Metal Performance Shaders (MPS):
+- **TrainingMonitor**: Monitors real VRAM allocated by PyTorch on Metal via `torch.mps.current_allocated_memory()`.
+- **SmartSummary & ModelView**: Native support for `device="mps"` and `device="auto"`.
+- **Reproducibility**: `seed_everything()` seeds Apple MPS RNG via `torch.mps.manual_seed()`.
+- **Model Benchmarking**: `benchmark_model()` accurately syncs asynchronous Metal execution using `torch.mps.synchronize()`.
+- **Weight Transfer**: In-memory `transfer_weights()` seamlessly maps weights into target PyTorch models on MPS devices.
+- **Diagnostic Inspector**: `inspect_tensor()` handles MPS tensors safely with fallback protection for quantile kernels.
 
 ---
 
@@ -1774,6 +1795,14 @@ pytest test/ -v
 ---
 
 ## What's New
+
+**v0.3.1 - Full Apple Silicon (Metal/MPS) Compatibility** 🍎
+- ✅ **MPS Hardware Detection**: `is_mps_available()` and `get_device()` automatically identify Apple Metal acceleration and resolve the optimal backend (`cuda` -> `mps` -> `cpu`).
+- ✅ **TrainingMonitor Metal VRAM Tracking**: Real-time memory monitoring on Apple Silicon using `torch.mps.current_allocated_memory()`.
+- ✅ **Asynchronous MPS Benchmarking**: `benchmark_model()` synchronizes Apple Metal kernels using `torch.mps.synchronize()` for accurate latency and FPS metrics.
+- ✅ **Deterministic MPS Seeding**: `seed_everything()` seeds Apple MPS RNG via `torch.mps.manual_seed()`.
+- ✅ **Cross-Device Weight Transfer**: `transfer_weights()` transfers directly into target PyTorch models on MPS devices.
+- ✅ **MPS Robustness**: `inspect_tensor()`, `SmartSummary`, and `ModelView` automatically adapt to MPS device states with safety fallbacks for unsupported ops.
 
 **v0.3.0 - Research & Production Deep Learning Toolkit (Phases 1, 2, & 3)** 🚀
 - ✅ **Cross-Framework Reproducibility**: `seed_everything()` sets unified seeds, determinism flags, and hardware workspace configs for Python, NumPy, PyTorch (CPU/CUDA), and TensorFlow.

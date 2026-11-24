@@ -27,6 +27,8 @@ from .utils import (
     check_anomalies,
     benchmark_model,
     transfer_weights,
+    is_mps_available,
+    get_device,
 )
 
 __all__ = [
@@ -55,4 +57,6 @@ __all__ = [
     'check_anomalies',
     'benchmark_model',
     'transfer_weights',
+    'is_mps_available',
+    'get_device',
 ]

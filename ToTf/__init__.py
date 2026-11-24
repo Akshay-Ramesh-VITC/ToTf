@@ -3,7 +3,7 @@ ToTf - A Cross-Library Compatible Library for PyTorch and TensorFlow
 Provides additional features for ease of use not directly available in Torch or TF
 """
 
-from .backend import get_backend, _BACKEND
+from .backend import get_backend, _BACKEND, is_mps_available, is_cuda_available, get_device
 from .backend_manager import SmartSummary, TrainingMonitor, ModelView, draw_graph, get_component
 from .backend_manager import toONNX, fromONNX
 from .backend_manager import (
@@ -24,10 +24,13 @@ from .backend_manager import (
     transfer_weights,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __author__ = "Akshay"
 __all__ = [
     "get_backend",
+    "is_mps_available",
+    "is_cuda_available",
+    "get_device",
     "TrainingMonitor",
     "SmartSummary",
     "ModelView",

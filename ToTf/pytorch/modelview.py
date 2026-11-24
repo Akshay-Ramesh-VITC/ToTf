@@ -78,7 +78,7 @@ class ModelView:
                        Can be list of sizes for multi-input models
             input_data: Optional actual input tensor(s) instead of input_size
             batch_size: Batch size for shape inference (default: 1)
-            device: Device for computation ('cpu' or 'cuda')
+            device: Device for computation ('cpu', 'cuda', 'mps', or 'auto')
             depth: Maximum depth for nested models (default: 3)
                   Controls how deep to show in module hierarchy
             expand_nested: Whether to expand nested models with dashed borders
@@ -101,6 +101,13 @@ class ModelView:
         self.input_size = input_size
         self.input_data = input_data
         self.batch_size = batch_size
+        if device == "auto":
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
         self.device = device
         self.depth = depth
         self.expand_nested = expand_nested

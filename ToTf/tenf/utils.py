@@ -30,6 +30,42 @@ except Exception:
     tf2onnx = None
 
 
+def is_mps_available() -> bool:
+    """Returns True if Apple Silicon Metal Performance Shaders (MPS) is available in PyTorch."""
+    try:
+        import torch
+        if hasattr(torch.backends, "mps"):
+            is_built = getattr(torch.backends.mps, "is_built", lambda: True)()
+            return is_built and torch.backends.mps.is_available()
+        return False
+    except Exception:
+        return False
+
+
+def get_device(preferred: Optional[str] = None) -> str:
+    """
+    Returns the optimal compute device string ('cuda', 'mps', or 'cpu').
+    Supports Apple Silicon Metal (MPS) acceleration out of the box.
+    """
+    if preferred is not None and preferred != "auto":
+        return str(preferred)
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        if is_mps_available():
+            return "mps"
+    except Exception:
+        pass
+    try:
+        import tensorflow as tf
+        if len(tf.config.list_physical_devices("GPU")) > 0:
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
 def toONNX(model: keras.Model, filepath: str, example_input: Optional[np.ndarray] = None,
            opset: int = 11, input_signature: Optional[list] = None) -> str:
     """Export a Keras model to ONNX using tf2onnx.
@@ -656,15 +692,23 @@ def seed_everything(
         if torch.cuda.is_available():
             torch.cuda.manual_seed(seed)
             torch.cuda.manual_seed_all(seed)
+        if hasattr(torch, "mps") and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            if hasattr(torch.mps, "manual_seed"):
+                try:
+                    torch.mps.manual_seed(seed)
+                except Exception:
+                    pass
+            seeded.append("mps")
         if deterministic:
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.benchmark = False
-            os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+            if torch.cuda.is_available():
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+                os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
             try:
                 torch.use_deterministic_algorithms(True, warn_only=True)
             except Exception:
                 pass
-        elif benchmark:
+        elif benchmark and torch.cuda.is_available():
             torch.backends.cudnn.benchmark = True
         seeded.append("torch")
     except ImportError:
@@ -793,7 +837,10 @@ def inspect_tensor(
                         mean_val = float(torch.mean(valid_vals).item())
                         std_val = float(torch.std(valid_vals).item()) if valid_count > 1 else 0.0
                         if quantiles:
-                            q = torch.quantile(valid_vals, torch.tensor([0.25, 0.50, 0.75], device=valid_vals.device))
+                            try:
+                                q = torch.quantile(valid_vals, torch.tensor([0.25, 0.50, 0.75], device=valid_vals.device))
+                            except Exception:
+                                q = torch.quantile(valid_vals.cpu(), torch.tensor([0.25, 0.50, 0.75]))
                             q_dict = {
                                 "p25": float(q[0].item()),
                                 "p50": float(q[1].item()),
@@ -808,7 +855,10 @@ def inspect_tensor(
                     mean_val = float(torch.mean(t_float).item())
                     std_val = float(torch.std(t_float).item()) if numel > 1 else 0.0
                     if quantiles:
-                        q = torch.quantile(t_float, torch.tensor([0.25, 0.50, 0.75], device=t_float.device))
+                        try:
+                            q = torch.quantile(t_float, torch.tensor([0.25, 0.50, 0.75], device=t_float.device))
+                        except Exception:
+                            q = torch.quantile(t_float.cpu(), torch.tensor([0.25, 0.50, 0.75]))
                         q_dict = {
                             "p25": float(q[0].item()),
                             "p50": float(q[1].item()),
@@ -1415,10 +1465,13 @@ def benchmark_model(
     repetition: int = 50,
     batch_size: int = 1,
     print_table: bool = True,
+    num_runs: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Comprehensive performance and complexity benchmark for TensorFlow and PyTorch models.
     """
+    if num_runs is not None:
+        repetition = num_runs
     is_tf_model = isinstance(model, (keras.Model, keras.layers.Layer))
     is_torch_model = False
     try:
@@ -1486,8 +1539,8 @@ def benchmark_model(
             t1 = time.perf_counter()
             latencies.append((t1 - t0) * 1000.0)
     else:
-        if target_device is None:
-            target_device = "cuda" if torch.cuda.is_available() else "cpu"
+        if target_device is None or target_device == "auto":
+            target_device = get_device()
         model_device = torch.device(target_device)
         model = model.to(model_device)
         was_train = model.training
@@ -1501,14 +1554,19 @@ def benchmark_model(
         else:
             raise ValueError("Either input_size or input_data must be provided.")
 
+        def _sync_target_device():
+            if "cuda" in str(target_device) and torch.cuda.is_available():
+                torch.cuda.synchronize()
+            elif "mps" in str(target_device) and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+                torch.mps.synchronize()
+
         with torch.no_grad():
             for _ in range(warmup):
                 _ = model(x)
-                if target_device == "cuda":
-                    torch.cuda.synchronize()
+                _sync_target_device()
 
             latencies = []
-            if target_device == "cuda":
+            if "cuda" in str(target_device) and torch.cuda.is_available():
                 for _ in range(repetition):
                     start_event = torch.cuda.Event(enable_timing=True)
                     end_event = torch.cuda.Event(enable_timing=True)
@@ -1517,6 +1575,14 @@ def benchmark_model(
                     end_event.record()
                     torch.cuda.synchronize()
                     latencies.append(start_event.elapsed_time(end_event))
+            elif "mps" in str(target_device):
+                for _ in range(repetition):
+                    _sync_target_device()
+                    t0 = time.perf_counter()
+                    _ = model(x)
+                    _sync_target_device()
+                    t1 = time.perf_counter()
+                    latencies.append((t1 - t0) * 1000.0)
             else:
                 for _ in range(repetition):
                     t0 = time.perf_counter()
@@ -1769,37 +1835,37 @@ def transfer_weights(
                 else:
                     w_th = s_w
                 with torch.no_grad():
-                    t["obj"].weight.copy_(torch.from_numpy(w_th))
+                    t["obj"].weight.copy_(torch.from_numpy(w_th).to(device=t["obj"].weight.device, dtype=t["obj"].weight.dtype))
                     if s_b is not None and t["obj"].bias is not None:
-                        t["obj"].bias.copy_(torch.from_numpy(s_b))
+                        t["obj"].bias.copy_(torch.from_numpy(s_b).to(device=t["obj"].bias.device, dtype=t["obj"].bias.dtype))
                 transferred_count += w_th.size + (s_b.size if s_b is not None else 0)
 
             elif s_type == "linear":
                 w_th = np.transpose(s_w, (1, 0))
                 with torch.no_grad():
-                    t["obj"].weight.copy_(torch.from_numpy(w_th))
+                    t["obj"].weight.copy_(torch.from_numpy(w_th).to(device=t["obj"].weight.device, dtype=t["obj"].weight.dtype))
                     if s_b is not None and t["obj"].bias is not None:
-                        t["obj"].bias.copy_(torch.from_numpy(s_b))
+                        t["obj"].bias.copy_(torch.from_numpy(s_b).to(device=t["obj"].bias.device, dtype=t["obj"].bias.dtype))
                 transferred_count += w_th.size + (s_b.size if s_b is not None else 0)
 
             elif s_type == "bn":
                 with torch.no_grad():
                     if s["weight"] is not None and t["obj"].weight is not None:
-                        t["obj"].weight.copy_(torch.from_numpy(s["weight"]))
+                        t["obj"].weight.copy_(torch.from_numpy(s["weight"]).to(device=t["obj"].weight.device, dtype=t["obj"].weight.dtype))
                     if s["bias"] is not None and t["obj"].bias is not None:
-                        t["obj"].bias.copy_(torch.from_numpy(s["bias"]))
+                        t["obj"].bias.copy_(torch.from_numpy(s["bias"]).to(device=t["obj"].bias.device, dtype=t["obj"].bias.dtype))
                     if s["running_mean"] is not None and t["obj"].running_mean is not None:
-                        t["obj"].running_mean.copy_(torch.from_numpy(s["running_mean"]))
+                        t["obj"].running_mean.copy_(torch.from_numpy(s["running_mean"]).to(device=t["obj"].running_mean.device, dtype=t["obj"].running_mean.dtype))
                     if s["running_var"] is not None and t["obj"].running_var is not None:
-                        t["obj"].running_var.copy_(torch.from_numpy(s["running_var"]))
+                        t["obj"].running_var.copy_(torch.from_numpy(s["running_var"]).to(device=t["obj"].running_var.device, dtype=t["obj"].running_var.dtype))
                 transferred_count += sum(w.size for w in [s["weight"], s["bias"], s["running_mean"], s["running_var"]] if w is not None)
 
         else:
             if is_target_torch:
                 with torch.no_grad():
-                    t["obj"].weight.copy_(torch.from_numpy(s_w))
+                    t["obj"].weight.copy_(torch.from_numpy(s_w).to(device=t["obj"].weight.device, dtype=t["obj"].weight.dtype))
                     if s_b is not None and t["obj"].bias is not None:
-                        t["obj"].bias.copy_(torch.from_numpy(s_b))
+                        t["obj"].bias.copy_(torch.from_numpy(s_b).to(device=t["obj"].bias.device, dtype=t["obj"].bias.dtype))
             else:
                 t["obj"].set_weights([s_w] + ([s_b] if s_b is not None else []))
             transferred_count += s_w.size + (s_b.size if s_b is not None else 0)

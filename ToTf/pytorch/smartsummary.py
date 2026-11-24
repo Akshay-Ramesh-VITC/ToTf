@@ -58,12 +58,20 @@ class SmartSummary:
             input_size: Input tensor size (excluding batch dimension)
                        e.g., (3, 224, 224) for images
             batch_size: Batch size for shape inference
-            device: Device to run analysis on ('cpu' or 'cuda')
+            device: Device to run analysis on ('cpu', 'cuda', 'mps', or 'auto')
             track_gradients: Whether to track gradient statistics (requires forward+backward pass)
         """
         self.model = model
         self.input_size = input_size
         self.batch_size = batch_size
+        if device == "auto":
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                is_built = getattr(torch.backends.mps, "is_built", lambda: True)()
+                device = "mps" if is_built else "cpu"
+            else:
+                device = "cpu"
         self.device = device
         self.track_gradients = track_gradients
         
@@ -384,8 +392,16 @@ class SmartSummary:
             return
 
         # Create small random input
-        x = torch.randn(self.batch_size, *self.input_size).to(self.device)
-        self.model.to(self.device)
+        try:
+            x = torch.randn(self.batch_size, *self.input_size).to(self.device)
+            self.model.to(self.device)
+        except RuntimeError as e:
+            if "mps" in str(self.device).lower() and "not linked" in str(e).lower():
+                self.device = "cpu"
+                x = torch.randn(self.batch_size, *self.input_size).to(self.device)
+                self.model.to(self.device)
+            else:
+                raise
 
         # Ensure train mode so autograd keeps activations
         self.model.train()
@@ -510,8 +526,16 @@ class SmartSummary:
         hooks = self._register_hooks([])
         
         # Create dummy input
-        x = torch.randn(self.batch_size, *self.input_size).to(self.device)
-        self.model.to(self.device)
+        try:
+            x = torch.randn(self.batch_size, *self.input_size).to(self.device)
+            self.model.to(self.device)
+        except RuntimeError as e:
+            if "mps" in str(self.device).lower() and "not linked" in str(e).lower():
+                self.device = "cpu"
+                x = torch.randn(self.batch_size, *self.input_size).to(self.device)
+                self.model.to(self.device)
+            else:
+                raise
         
         # Forward pass
         if self.track_gradients:

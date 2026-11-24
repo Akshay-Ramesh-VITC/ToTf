@@ -409,3 +409,19 @@ def transfer_weights(source_model: Any, target_model: Any, *args, backend_name: 
     if impl_mod is None or not hasattr(impl_mod, "transfer_weights"):
         raise ImportError(f"transfer_weights not available for backend '{b}'")
     return impl_mod.transfer_weights(source_model, target_model, *args, **kwargs)
+
+
+def is_mps_available() -> bool:
+    """Returns True if Apple Silicon Metal Performance Shaders (MPS) is available."""
+    return _backend_pkg.is_mps_available()
+
+
+def is_cuda_available() -> bool:
+    """Returns True if CUDA GPU acceleration is available."""
+    return _backend_pkg.is_cuda_available()
+
+
+def get_device(preferred: Optional[str] = None) -> str:
+    """Returns optimal compute device string ('cuda', 'mps', or 'cpu')."""
+    return _backend_pkg.get_device(preferred)
+
